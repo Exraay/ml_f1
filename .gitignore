@@ -1,0 +1,15 @@
+__pycache__/
+.pytest_cache/
+.ipynb_checkpoints/
+.venv/
+env/
+.env
+data/cache/
+notebooks/data/cache/
+outputs/
+*.parquet
+*.csv
+*.png
+!notebooks/reports/*.png
+*.html
+*.sqlite
