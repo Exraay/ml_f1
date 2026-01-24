@@ -13,3 +13,4 @@ outputs/
 !notebooks/reports/*.png
 *.html
 *.sqlite
+.claude
