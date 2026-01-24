@@ -22,7 +22,7 @@ def time_based_split(
 def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
     return {
         "mae": mean_absolute_error(y_true, y_pred),
-        "rmse": mean_squared_error(y_true, y_pred, squared=False),
+        "rmse": mean_squared_error(y_true, y_pred),
     }
 
 
