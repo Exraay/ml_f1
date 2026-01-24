@@ -1,12 +1,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Optional, Tuple
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+
+# Plotly imports (optional, for interactive plots)
+try:
+    import plotly.express as px
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    PLOTLY_AVAILABLE = False
+    px = None
+    go = None
 
 
 _STYLE_READY = False
@@ -643,3 +655,589 @@ def plot_race_evolution(
     ax.grid(True, axis="y")
     plt.tight_layout()
     return ax
+
+
+# =============================================================================
+# INTERACTIVE PLOTLY VISUALIZATIONS
+# =============================================================================
+
+
+def _check_plotly() -> None:
+    """Raise ImportError if Plotly is not available."""
+    if not PLOTLY_AVAILABLE:
+        raise ImportError(
+            "Plotly is required for interactive plots. "
+            "Install with: pip install plotly"
+        )
+
+
+def plot_interactive_actual_vs_pred(
+    y_test: np.ndarray,
+    y_pred: np.ndarray,
+    test_df: pd.DataFrame,
+    *,
+    hover_cols: List[str] = None,
+    title: str = "Predicted vs Actual Lap Time",
+    color_by: str = None,
+    sample_size: int = None,
+) -> "go.Figure":
+    """
+    Create interactive Plotly scatter plot of actual vs predicted lap times.
+
+    Args:
+        y_test: Actual lap times (seconds).
+        y_pred: Predicted lap times (seconds).
+        test_df: Test DataFrame with metadata for hover info.
+        hover_cols: Columns to show on hover (default: Driver, LapNumber, Compound).
+        title: Plot title.
+        color_by: Column to color points by (e.g., 'Compound', 'Driver').
+        sample_size: If set, randomly sample this many points for performance.
+
+    Returns:
+        Plotly Figure object.
+    """
+    _check_plotly()
+
+    # Default hover columns
+    if hover_cols is None:
+        hover_cols = ["Driver", "LapNumber", "Compound", "Circuit", "TyreLife"]
+
+    # Build plot DataFrame
+    plot_df = test_df.copy().reset_index(drop=True)
+    plot_df["Actual"] = np.asarray(y_test, dtype=float)
+    plot_df["Predicted"] = np.asarray(y_pred, dtype=float)
+    plot_df["Residual"] = plot_df["Predicted"] - plot_df["Actual"]
+    plot_df["AbsError"] = np.abs(plot_df["Residual"])
+
+    # Filter to available hover columns
+    available_hover = [c for c in hover_cols if c in plot_df.columns]
+
+    # Sample if needed
+    if sample_size and len(plot_df) > sample_size:
+        plot_df = plot_df.sample(n=sample_size, random_state=42).reset_index(drop=True)
+
+    # Create scatter plot
+    if color_by and color_by in plot_df.columns:
+        fig = px.scatter(
+            plot_df,
+            x="Actual",
+            y="Predicted",
+            color=color_by,
+            hover_data=available_hover + ["Residual", "AbsError"],
+            title=title,
+            labels={"Actual": "Actual Lap Time (s)", "Predicted": "Predicted Lap Time (s)"},
+            opacity=0.6,
+        )
+    else:
+        fig = px.scatter(
+            plot_df,
+            x="Actual",
+            y="Predicted",
+            color="AbsError",
+            color_continuous_scale="RdYlGn_r",
+            hover_data=available_hover + ["Residual"],
+            title=title,
+            labels={"Actual": "Actual Lap Time (s)", "Predicted": "Predicted Lap Time (s)"},
+            opacity=0.6,
+        )
+
+    # Add perfect prediction line (y = x)
+    min_val = min(plot_df["Actual"].min(), plot_df["Predicted"].min())
+    max_val = max(plot_df["Actual"].max(), plot_df["Predicted"].max())
+    fig.add_trace(
+        go.Scatter(
+            x=[min_val, max_val],
+            y=[min_val, max_val],
+            mode="lines",
+            name="Perfect Prediction (y=x)",
+            line=dict(color="red", width=2, dash="dash"),
+            hoverinfo="skip",
+        )
+    )
+
+    # Layout
+    fig.update_layout(
+        template="plotly_dark",
+        hovermode="closest",
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+    )
+
+    return fig
+
+
+def plot_feature_importance(
+    fitted_estimator: Any,
+    *,
+    top_n: int = 10,
+    title: str = "Feature Importance (Top 10)",
+    interactive: bool = True,
+) -> Union["go.Figure", plt.Axes]:
+    """
+    Extract and plot feature importances from a fitted pipeline.
+
+    Supports XGBoost, RandomForest, and other tree-based models.
+
+    Args:
+        fitted_estimator: Fitted sklearn Pipeline or GridSearchCV.
+        top_n: Number of top features to display.
+        title: Plot title.
+        interactive: If True, return Plotly figure; else matplotlib Axes.
+
+    Returns:
+        Plotly Figure or matplotlib Axes.
+    """
+    # Resolve pipeline
+    estimator = fitted_estimator
+    if hasattr(estimator, "best_estimator_"):
+        estimator = estimator.best_estimator_
+
+    if not hasattr(estimator, "named_steps"):
+        raise ValueError("Estimator must be a sklearn Pipeline.")
+
+    preprocessor = estimator.named_steps.get("preprocess")
+    model = estimator.named_steps.get("model")
+
+    if not hasattr(model, "feature_importances_"):
+        raise ValueError("Model does not have feature_importances_ attribute.")
+
+    importances = model.feature_importances_
+
+    # Get feature names
+    feature_names = []
+    if hasattr(preprocessor, "get_feature_names_out"):
+        feature_names = list(preprocessor.get_feature_names_out())
+    elif hasattr(preprocessor, "feature_names_in_"):
+        feature_names = list(preprocessor.feature_names_in_)
+
+    if not feature_names:
+        feature_names = [f"Feature_{i}" for i in range(len(importances))]
+
+    # Truncate to match
+    n = min(len(importances), len(feature_names))
+    importances = importances[:n]
+    feature_names = feature_names[:n]
+
+    # Sort by importance
+    indices = np.argsort(importances)[::-1][:top_n]
+    top_features = [feature_names[i] for i in indices]
+    top_importances = importances[indices]
+
+    # Clean feature names (remove prefixes like 'num__', 'cat__')
+    clean_names = []
+    for name in top_features:
+        if "__" in name:
+            name = name.split("__", 1)[1]
+        clean_names.append(name)
+
+    if interactive:
+        _check_plotly()
+
+        fig = go.Figure(
+            go.Bar(
+                x=top_importances[::-1],
+                y=clean_names[::-1],
+                orientation="h",
+                marker=dict(
+                    color=top_importances[::-1],
+                    colorscale="Viridis",
+                    showscale=True,
+                    colorbar=dict(title="Importance"),
+                ),
+                text=[f"{v:.4f}" for v in top_importances[::-1]],
+                textposition="outside",
+            )
+        )
+
+        fig.update_layout(
+            title=title,
+            xaxis_title="Importance",
+            yaxis_title="Feature",
+            template="plotly_dark",
+            height=400 + top_n * 20,
+        )
+
+        return fig
+    else:
+        setup_f1_style()
+        fig, ax = plt.subplots(figsize=(10, max(5, top_n * 0.5)))
+        ax.barh(clean_names[::-1], top_importances[::-1], color="#64C4FF")
+        ax.set_xlabel("Importance")
+        ax.set_title(title)
+        plt.tight_layout()
+        return ax
+
+
+def plot_error_distribution(
+    y_test: np.ndarray,
+    y_pred: np.ndarray,
+    *,
+    title: str = "Prediction Error Distribution",
+    bins: int = 50,
+    show_stats: bool = True,
+    interactive: bool = True,
+) -> Union["go.Figure", plt.Axes]:
+    """
+    Plot histogram of prediction residuals (errors).
+
+    Args:
+        y_test: Actual values.
+        y_pred: Predicted values.
+        title: Plot title.
+        bins: Number of histogram bins.
+        show_stats: Show mean, std, and percentiles.
+        interactive: If True, return Plotly figure; else matplotlib Axes.
+
+    Returns:
+        Plotly Figure or matplotlib Axes.
+    """
+    residuals = np.asarray(y_pred) - np.asarray(y_test)
+
+    # Statistics
+    mean_err = np.mean(residuals)
+    std_err = np.std(residuals)
+    median_err = np.median(residuals)
+    p95 = np.percentile(np.abs(residuals), 95)
+    within_05s = np.mean(np.abs(residuals) < 0.5) * 100
+    within_1s = np.mean(np.abs(residuals) < 1.0) * 100
+
+    if interactive:
+        _check_plotly()
+
+        fig = go.Figure()
+
+        # Histogram
+        fig.add_trace(
+            go.Histogram(
+                x=residuals,
+                nbinsx=bins,
+                name="Residuals",
+                marker=dict(color="steelblue", line=dict(color="white", width=0.5)),
+                opacity=0.75,
+            )
+        )
+
+        # Mean line
+        fig.add_vline(
+            x=0, line=dict(color="red", width=2, dash="dash"),
+            annotation_text="Zero", annotation_position="top"
+        )
+        fig.add_vline(
+            x=mean_err, line=dict(color="orange", width=2),
+            annotation_text=f"Mean: {mean_err:.3f}s", annotation_position="top right"
+        )
+
+        # Stats annotation
+        if show_stats:
+            stats_text = (
+                f"<b>Statistics:</b><br>"
+                f"Mean: {mean_err:+.4f}s<br>"
+                f"Std: {std_err:.4f}s<br>"
+                f"Median: {median_err:+.4f}s<br>"
+                f"95th %ile |error|: {p95:.4f}s<br>"
+                f"Within 0.5s: {within_05s:.1f}%<br>"
+                f"Within 1.0s: {within_1s:.1f}%"
+            )
+            fig.add_annotation(
+                x=0.98, y=0.95, xref="paper", yref="paper",
+                text=stats_text, showarrow=False,
+                align="right", bgcolor="rgba(0,0,0,0.7)",
+                font=dict(size=11), bordercolor="white", borderwidth=1,
+            )
+
+        fig.update_layout(
+            title=title,
+            xaxis_title="Residual (Predicted - Actual) [seconds]",
+            yaxis_title="Frequency",
+            template="plotly_dark",
+            showlegend=False,
+        )
+
+        return fig
+    else:
+        setup_f1_style()
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.hist(residuals, bins=bins, color="steelblue", edgecolor="white", alpha=0.75)
+        ax.axvline(0, color="red", linestyle="--", linewidth=2, label="Zero")
+        ax.axvline(mean_err, color="orange", linewidth=2, label=f"Mean: {mean_err:.3f}s")
+        ax.set_xlabel("Residual (Predicted - Actual) [s]")
+        ax.set_ylabel("Frequency")
+        ax.set_title(title)
+        ax.legend()
+
+        if show_stats:
+            stats_text = f"Std: {std_err:.3f}s | Within 0.5s: {within_05s:.1f}%"
+            ax.text(0.98, 0.95, stats_text, transform=ax.transAxes,
+                    ha="right", va="top", fontsize=10,
+                    bbox=dict(boxstyle="round", facecolor="black", alpha=0.7))
+
+        plt.tight_layout()
+        return ax
+
+
+def plot_error_by_category(
+    y_test: np.ndarray,
+    y_pred: np.ndarray,
+    test_df: pd.DataFrame,
+    category_col: str,
+    *,
+    title: str = None,
+    top_n: int = 15,
+    interactive: bool = True,
+) -> Union["go.Figure", plt.Axes]:
+    """
+    Plot mean absolute error by category (e.g., Circuit, Driver, Compound).
+
+    Args:
+        y_test: Actual values.
+        y_pred: Predicted values.
+        test_df: Test DataFrame with category column.
+        category_col: Column to group by.
+        title: Plot title (default: "MAE by {category_col}").
+        top_n: Number of categories to show.
+        interactive: If True, return Plotly figure.
+
+    Returns:
+        Plotly Figure or matplotlib Axes.
+    """
+    if title is None:
+        title = f"Mean Absolute Error by {category_col}"
+
+    df = test_df.copy().reset_index(drop=True)
+    df["AbsError"] = np.abs(np.asarray(y_pred) - np.asarray(y_test))
+
+    if category_col not in df.columns:
+        raise ValueError(f"Column '{category_col}' not found in test_df.")
+
+    # Group and sort
+    grouped = (
+        df.groupby(category_col)["AbsError"]
+        .agg(["mean", "std", "count"])
+        .reset_index()
+        .rename(columns={"mean": "MAE", "std": "Std", "count": "Count"})
+        .sort_values("MAE")
+        .head(top_n)
+    )
+
+    if interactive:
+        _check_plotly()
+
+        fig = go.Figure(
+            go.Bar(
+                x=grouped["MAE"],
+                y=grouped[category_col],
+                orientation="h",
+                marker=dict(color=grouped["MAE"], colorscale="RdYlGn_r"),
+                text=[f"{v:.3f}s (n={n})" for v, n in zip(grouped["MAE"], grouped["Count"])],
+                textposition="outside",
+                hovertemplate=(
+                    f"<b>%{{y}}</b><br>"
+                    f"MAE: %{{x:.4f}}s<br>"
+                    f"Std: %{{customdata[0]:.4f}}s<br>"
+                    f"Count: %{{customdata[1]}}<extra></extra>"
+                ),
+                customdata=grouped[["Std", "Count"]].values,
+            )
+        )
+
+        # Overall MAE line
+        overall_mae = df["AbsError"].mean()
+        fig.add_vline(
+            x=overall_mae,
+            line=dict(color="red", width=2, dash="dash"),
+            annotation_text=f"Overall MAE: {overall_mae:.3f}s",
+        )
+
+        fig.update_layout(
+            title=title,
+            xaxis_title="Mean Absolute Error (s)",
+            yaxis_title=category_col,
+            template="plotly_dark",
+            height=400 + top_n * 25,
+        )
+
+        return fig
+    else:
+        setup_f1_style()
+        fig, ax = plt.subplots(figsize=(10, max(5, top_n * 0.4)))
+        ax.barh(grouped[category_col], grouped["MAE"], color="#64C4FF")
+        ax.axvline(df["AbsError"].mean(), color="red", linestyle="--", label="Overall MAE")
+        ax.set_xlabel("Mean Absolute Error (s)")
+        ax.set_title(title)
+        ax.legend()
+        plt.tight_layout()
+        return ax
+
+
+def save_interactive_plot(
+    fig: "go.Figure",
+    path: Union[str, Path],
+    *,
+    include_plotlyjs: str = "cdn",
+    full_html: bool = True,
+) -> Path:
+    """
+    Save a Plotly figure as a standalone HTML file.
+
+    Args:
+        fig: Plotly Figure object.
+        path: Output file path (should end in .html).
+        include_plotlyjs: How to include Plotly.js ("cdn", "True", or path).
+        full_html: If True, create complete HTML document.
+
+    Returns:
+        Path to saved file.
+    """
+    _check_plotly()
+
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Ensure .html extension
+    if output_path.suffix.lower() != ".html":
+        output_path = output_path.with_suffix(".html")
+
+    fig.write_html(
+        str(output_path),
+        include_plotlyjs=include_plotlyjs,
+        full_html=full_html,
+    )
+
+    return output_path
+
+
+def create_dashboard(
+    y_test: np.ndarray,
+    y_pred: np.ndarray,
+    test_df: pd.DataFrame,
+    fitted_model: Any = None,
+    *,
+    title: str = "F1 Lap Time Prediction Dashboard",
+) -> "go.Figure":
+    """
+    Create a comprehensive dashboard with multiple subplots.
+
+    Includes:
+    - Actual vs Predicted scatter
+    - Error distribution histogram
+    - Feature importance (if model provided)
+    - Error by compound
+
+    Args:
+        y_test: Actual lap times.
+        y_pred: Predicted lap times.
+        test_df: Test DataFrame.
+        fitted_model: Optional fitted pipeline for feature importance.
+        title: Dashboard title.
+
+    Returns:
+        Plotly Figure with subplots.
+    """
+    _check_plotly()
+
+    # Determine subplot configuration
+    has_model = fitted_model is not None
+    n_rows = 2
+    n_cols = 2
+
+    subplot_titles = [
+        "Predicted vs Actual",
+        "Error Distribution",
+        "Error by Compound",
+        "Feature Importance" if has_model else "Error by Circuit",
+    ]
+
+    fig = make_subplots(
+        rows=n_rows, cols=n_cols,
+        subplot_titles=subplot_titles,
+        specs=[[{"type": "scatter"}, {"type": "histogram"}],
+               [{"type": "bar"}, {"type": "bar"}]],
+        vertical_spacing=0.12,
+        horizontal_spacing=0.1,
+    )
+
+    residuals = np.asarray(y_pred) - np.asarray(y_test)
+    abs_errors = np.abs(residuals)
+
+    # 1. Actual vs Predicted (sample for performance)
+    sample_idx = np.random.choice(len(y_test), size=min(3000, len(y_test)), replace=False)
+    fig.add_trace(
+        go.Scatter(
+            x=np.asarray(y_test)[sample_idx],
+            y=np.asarray(y_pred)[sample_idx],
+            mode="markers",
+            marker=dict(size=4, color=abs_errors[sample_idx], colorscale="RdYlGn_r", opacity=0.5),
+            name="Predictions",
+            hovertemplate="Actual: %{x:.2f}s<br>Predicted: %{y:.2f}s<extra></extra>",
+        ),
+        row=1, col=1
+    )
+    # Perfect prediction line
+    min_v, max_v = min(y_test), max(y_test)
+    fig.add_trace(
+        go.Scatter(
+            x=[min_v, max_v], y=[min_v, max_v],
+            mode="lines", line=dict(color="red", dash="dash", width=2),
+            name="y=x", showlegend=False,
+        ),
+        row=1, col=1
+    )
+
+    # 2. Error Distribution
+    fig.add_trace(
+        go.Histogram(x=residuals, nbinsx=50, marker=dict(color="steelblue"), name="Residuals"),
+        row=1, col=2
+    )
+
+    # 3. Error by Compound
+    df = test_df.copy().reset_index(drop=True)
+    df["AbsError"] = abs_errors
+    if "Compound" in df.columns:
+        compound_mae = df.groupby("Compound")["AbsError"].mean().sort_values()
+        fig.add_trace(
+            go.Bar(x=compound_mae.values, y=compound_mae.index, orientation="h", marker=dict(color="teal"), name="MAE"),
+            row=2, col=1
+        )
+
+    # 4. Feature Importance or Error by Circuit
+    if has_model:
+        try:
+            estimator = fitted_model
+            if hasattr(estimator, "best_estimator_"):
+                estimator = estimator.best_estimator_
+            if hasattr(estimator, "named_steps"):
+                preprocessor = estimator.named_steps.get("preprocess")
+                model = estimator.named_steps.get("model")
+                if hasattr(model, "feature_importances_"):
+                    importances = model.feature_importances_
+                    names = list(preprocessor.get_feature_names_out()) if hasattr(preprocessor, "get_feature_names_out") else [f"f{i}" for i in range(len(importances))]
+                    n = min(10, len(importances))
+                    idx = np.argsort(importances)[-n:]
+                    fig.add_trace(
+                        go.Bar(x=importances[idx], y=[names[i].split("__")[-1] for i in idx], orientation="h", marker=dict(color="coral"), name="Importance"),
+                        row=2, col=2
+                    )
+        except Exception:
+            pass
+    else:
+        if "Circuit" in df.columns:
+            circuit_mae = df.groupby("Circuit")["AbsError"].mean().sort_values().head(10)
+            fig.add_trace(
+                go.Bar(x=circuit_mae.values, y=circuit_mae.index, orientation="h", marker=dict(color="coral"), name="MAE"),
+                row=2, col=2
+            )
+
+    # Layout
+    fig.update_layout(
+        title=dict(text=title, x=0.5, xanchor="center"),
+        template="plotly_dark",
+        height=700,
+        showlegend=False,
+    )
+
+    fig.update_xaxes(title_text="Actual (s)", row=1, col=1)
+    fig.update_yaxes(title_text="Predicted (s)", row=1, col=1)
+    fig.update_xaxes(title_text="Residual (s)", row=1, col=2)
+    fig.update_xaxes(title_text="MAE (s)", row=2, col=1)
+    fig.update_xaxes(title_text="Importance", row=2, col=2)
+
+    return fig

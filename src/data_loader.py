@@ -123,28 +123,90 @@ def load_laps_for_seasons(
     return combined
 
 
-def clean_laps(raw_laps: pd.DataFrame) -> pd.DataFrame:
+def clean_laps(
+    raw_laps: pd.DataFrame,
+    exclude_lap1: bool = False,
+    verbose: bool = True,
+) -> pd.DataFrame:
     """
-    Apply domain-specific filters:
-    - remove laps without a lap time or flagged as inaccurate
-    - drop in-laps/out-laps
-    - drop laps under safety car / virtual safety car
+    Apply domain-specific filters for reliable lap data.
+
+    Filters applied:
+    - Remove laps without a valid LapTime
+    - Remove laps flagged as inaccurate (IsAccurate == False)
+    - Remove pit-in and pit-out laps
+    - Remove laps under Safety Car / Virtual Safety Car (TrackStatus 4-7)
+    - Remove deleted laps (if Deleted column exists)
+    - Remove formation lap (LapNumber == 0)
+    - Optionally remove lap 1 (standing start, often atypical)
+
+    Args:
+        raw_laps: Raw lap data from FastF1.
+        exclude_lap1: If True, exclude lap 1 (standing start) from results.
+        verbose: If True, print statistics about filtered laps.
+
+    Returns:
+        Cleaned DataFrame with only valid racing laps.
     """
     laps = raw_laps.copy()
+    initial_count = len(laps)
+    filter_stats: dict[str, int] = {}
 
+    # Track count before each filter
+    def _apply_filter(df: pd.DataFrame, mask: pd.Series, name: str) -> pd.DataFrame:
+        removed = (~mask).sum()
+        if removed > 0:
+            filter_stats[name] = removed
+        return df[mask]
+
+    # 1. Remove laps without LapTime
     if "LapTime" in laps.columns:
-        laps = laps[laps["LapTime"].notna()]
+        laps = _apply_filter(laps, laps["LapTime"].notna(), "No LapTime")
+
+    # 2. Remove inaccurate laps
     if "IsAccurate" in laps.columns:
-        laps = laps[laps["IsAccurate"]]
+        laps = _apply_filter(laps, laps["IsAccurate"] == True, "IsAccurate=False")  # noqa: E712
+
+    # 3. Remove pit-out laps
     if "PitOutTime" in laps.columns:
-        laps = laps[~laps["PitOutTime"].notna()]
+        laps = _apply_filter(laps, ~laps["PitOutTime"].notna(), "Pit-Out")
+
+    # 4. Remove pit-in laps
     if "PitInTime" in laps.columns:
-        laps = laps[~laps["PitInTime"].notna()]
+        laps = _apply_filter(laps, ~laps["PitInTime"].notna(), "Pit-In")
+
+    # 5. Remove Safety Car / VSC laps (TrackStatus 4=SC, 5=Red, 6=VSC, 7=VSC Ending)
     if "TrackStatus" in laps.columns:
         safety_mask = laps["TrackStatus"].astype(str).str.contains("[4567]", na=False)
-        laps = laps[~safety_mask]
+        laps = _apply_filter(laps, ~safety_mask, "SC/VSC/RedFlag")
+
+    # 6. Remove deleted laps (if column exists)
+    if "Deleted" in laps.columns:
+        laps = _apply_filter(laps, laps["Deleted"] != True, "Deleted")  # noqa: E712
+
+    # 7. Remove formation lap (lap 0)
     if "LapNumber" in laps.columns:
-        laps = laps[laps["LapNumber"] > 0]
+        laps = _apply_filter(laps, laps["LapNumber"] > 0, "Formation Lap")
+
+    # 8. Optionally remove lap 1 (standing start)
+    if exclude_lap1 and "LapNumber" in laps.columns:
+        laps = _apply_filter(laps, laps["LapNumber"] > 1, "Lap 1 (Standing Start)")
 
     laps.reset_index(drop=True, inplace=True)
+
+    # Print statistics
+    if verbose and filter_stats:
+        final_count = len(laps)
+        total_removed = initial_count - final_count
+        print(f"\n{'='*50}")
+        print(f"Lap Cleaning Statistics")
+        print(f"{'='*50}")
+        print(f"Initial laps:  {initial_count:,}")
+        for reason, count in filter_stats.items():
+            print(f"  - {reason}: {count:,} removed")
+        print(f"{'='*50}")
+        print(f"Final laps:    {final_count:,} ({total_removed:,} removed, "
+              f"{100*final_count/initial_count:.1f}% retained)")
+        print(f"{'='*50}\n")
+
     return laps
