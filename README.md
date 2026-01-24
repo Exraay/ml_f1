@@ -1,16 +1,6 @@
-# ml_f1 — F1 Lap Time Prediction
+# F1 Lap Time Prediction (FastF1)
 
-Predict F1 race lap times from FastF1 data, with a reproducible pipeline and a set of comparison notebooks (linear → tree ensembles → XGBoost → PyTorch MLP).
-
-## Results (example figures)
-
-<p align="center">
-  <img src="notebooks/reports/feature_importance_xgboost_top10.png" width="800" alt="Top feature importances (XGBoost)" />
-</p>
-
-<p align="center">
-  <img src="notebooks/reports/spa_2023_pred_vs_actual.png" width="800" alt="Predicted vs actual lap times" />
-</p>
+Reproducible pipeline to predict F1 lap times using FastF1 data, with an apples-to-apples model comparison between **Linear**, **XGBoost**, and **Deep MLP**.
 
 ## Quickstart
 
@@ -20,17 +10,73 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Then open and run the notebooks in order:
+### Build the dataset (base, split-safe features)
 
-- `notebooks/01_data_pipeline.ipynb` — download + clean data, build feature table
-- `notebooks/02_model_linear.ipynb`
-- `notebooks/03_model_random_forest.ipynb`
-- `notebooks/04_model_xgboost.ipynb` — also exports the figures shown above
-- `notebooks/05_model_mlp.ipynb`
-- `notebooks/06_model_pytorch_mlp_extensive.ipynb`
-- `notebooks/07_mlp_systematic_improvement.ipynb`
+```bash
+python -m src.train --build-data
+```
 
-## Notes
+This creates:
+- `data/processed/laps_base.parquet` (cleaned + engineered features)
+- `data/processed/laps_base.metadata.json` (feature lists, filters, seasons)
 
-- The first data download requires internet access; subsequent runs use FastF1’s on-disk cache.
-- Large caches are intentionally ignored via `.gitignore` (e.g. `notebooks/data/cache/`).
+### Train + evaluate (with tuning)
+
+```bash
+python -m src.train --run --tune fast
+```
+
+Options:
+- `--tune off` (no search)
+- `--tune fast` (RandomizedSearchCV)
+- `--tune full` (GridSearchCV, slower)
+- `--test-rounds 6` (first N races of 2025 for test)
+
+Outputs go to `reports/`:
+- `model_comparison.png`
+- `pred_vs_actual.png`
+- `error_distribution.png`
+- `error_by_circuit.png`
+
+## Data split (apples-to-apples)
+
+- **Train**: 2022–2023
+- **Validation**: 2024
+- **Test**: first N races of 2025 (default: 6)
+
+## Notes on features
+
+Base dataset includes:
+- Lap history features (lags, rolling mean)
+- Physics-inspired features (fuel load, tire degradation)
+- Track evolution (cumulative field laps)
+- Weather (if available in FastF1)
+
+Train-only enhancements (no leakage):
+- Driver/Team historical pace aggregates
+- Stint-phase signals
+- Target encoding for high-cardinality categories
+
+## Future work (documented, not implemented)
+
+- ERS / battery state of charge
+- Wind speed and direction
+- Traffic / gap to front car
+
+These are not consistently available in FastF1 without external data sources.
+
+## Archived notebooks
+
+Legacy notebooks are preserved under `archive/notebooks/` to keep the repo slim.
+
+## New notebook workflow (clean, focused)
+
+Run in order:
+1. `notebooks/00_setup.ipynb`
+2. `notebooks/01_dataset_overview.ipynb`
+3. `notebooks/02_model_linear.ipynb`
+4. `notebooks/03_model_xgboost.ipynb`
+5. `notebooks/04_model_mlp.ipynb`
+6. `notebooks/05_model_comparison.ipynb`
+
+These notebooks use Plotly and share helpers from `notebooks/_common.py`.

@@ -10,7 +10,9 @@ outputs/
 *.parquet
 *.csv
 *.png
-!notebooks/reports/*.png
+!reports/*.png
+!archive/notebooks/reports/*.png
 *.html
 *.sqlite
-.claude
+!.claude
+!archive

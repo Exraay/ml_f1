@@ -1,0 +1,41 @@
+{
+  "created_at": "2026-01-24T21:35:15.777641",
+  "dataset": "C:/Users/tvcar/Desktop/FOM/2. Semester/Maschinelles Lernen/ml_f1/data/processed/laps_base.parquet",
+  "seasons": [
+    2022,
+    2023,
+    2024,
+    2025
+  ],
+  "include_physics": true,
+  "exclude_lap1": false,
+  "target": "LapTimeSeconds",
+  "numeric_features": [
+    "LapNumber",
+    "Stint",
+    "TyreLife",
+    "LapTimeLag1",
+    "LapTimeLag2",
+    "LapTimeLag3",
+    "RollingMean3",
+    "EstimatedFuelWeight",
+    "FuelEffect",
+    "TireDegradation",
+    "EstimatedGrip",
+    "TyreLifeLog",
+    "TyreLifeSq",
+    "TyreLifeCliff",
+    "SessionProgress",
+    "CumulativeFieldLaps",
+    "FieldLapProgress",
+    "TrackEvolution"
+  ],
+  "categorical_features": [
+    "Driver",
+    "Team",
+    "Compound",
+    "TrackStatusFlag",
+    "Circuit",
+    "TireAgeCategory"
+  ]
+}

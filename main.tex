@@ -1,0 +1,145 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{newtxtext,newtxmath}
+\usepackage{setspace}
+\usepackage[left=4cm,right=2cm,top=2.5cm,bottom=2.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{amsmath}
+\usepackage[authoryear]{natbib}
+\usepackage[hidelinks]{hyperref}
+
+\onehalfspacing
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.5em}
+
+\title{Vergleichende Analyse von Verfahren des maschinellen Lernens zur Pr\"adiktion von Rundenzeiten in der Formel~1}
+\author{Vorname Nachname}
+\date{24. Januar 2026}
+
+\begin{document}
+
+\begin{titlepage}
+    \centering
+    {\Large Seminararbeit im Modul Maschinelles Lernen \par}
+    \vspace{1.2cm}
+    {\LARGE Vergleichende Analyse von Verfahren des maschinellen Lernens zur Pr\"adiktion von Rundenzeiten in der Formel~1 \par}
+    \vspace{1.5cm}
+    \begin{tabular}{ll}
+        Studiengang: & Studiengang einf\"ugen \\
+        Modul: & Maschinelles Lernen \\
+        Betreuer: & Betreuer einf\"ugen \\
+        Matrikelnummer: & Matrikelnummer einf\"ugen \\
+        Abgabedatum: & 24. Januar 2026 \\
+    \end{tabular}
+    \vfill
+    {\large Vorname Nachname \par}
+\end{titlepage}
+
+\pagenumbering{Roman}
+\tableofcontents
+\clearpage
+\listoffigures
+\clearpage
+\listoftables
+\clearpage
+
+\section*{Abkuerzungsverzeichnis}
+\addcontentsline{toc}{section}{Abkuerzungsverzeichnis}
+\begin{description}
+    \item[MAE] Mean Absolute Error
+    \item[RMSE] Root Mean Squared Error
+    \item[$R^2$] Bestimmtheitsma\ss
+    \item[SC] Safety Car
+    \item[MLP] Multilayer Perceptron
+    \item[XGBoost] Extreme Gradient Boosting
+\end{description}
+\clearpage
+
+\section*{KI-Hilfsmittelverzeichnis}
+\addcontentsline{toc}{section}{KI-Hilfsmittelverzeichnis}
+\begin{itemize}
+    \item Keine KI-Tools verwendet. (Platzhalter, ggf. anpassen)
+\end{itemize}
+\clearpage
+
+\pagenumbering{arabic}
+
+\section{Einleitung}
+Die Pr\"adiktion von Rundenzeiten ist f\"ur Strategieentscheidungen in der Formel~1 zentral. Diese Arbeit analysiert die Eignung zweier Verfahren des maschinellen Lernens zur Vorhersage von Rundenzeiten auf Basis von FastF1-Daten der Saisons 2022--2025. Neben klassischen Telemetrie- und Streckenmerkmalen werden physikalisch motivierte Features wie Fuel Load und Tyre Degradation integriert. Ziel ist ein methodischer und empirischer Vergleich von XGBoost und einem tiefen MLP.
+
+\section{Theoretischer Hintergrund}
+Gradient-Boosting-Verfahren wie XGBoost kombinieren viele schwache Lerner, um nichtlineare Zusammenh\"ange und Feature-Interaktionen in tabellarischen Daten robust zu erfassen. Neuronale Netze (MLP) besitzen eine hohe Modellkapazit\"at, erfordern jedoch oft mehr Daten, Regularisierung und Feintuning. Grundlagen wissenschaftlichen Arbeitens und des Zitierens orientieren sich an \citet{theisen2021}. Die Datenquelle wird durch die FastF1-Dokumentation beschrieben \citep{fastf1docs}.
+
+\section{Datenbasis und Feature Engineering}
+Die Datenbasis umfasst Rundenzeiten und Kontextinformationen aus FastF1 (2022--2025). Zur Erh\"ohung der Vorhersagequalit\"at werden physikalische Features konstruiert.
+
+\subsection{Physikalische Features}
+\textbf{Fuel Weight Estimation:}
+\begin{equation}
+    Fuel_{lap} = 100kg - (Lap \times 2.0kg)
+\end{equation}
+
+\textbf{Tire Degradation:}
+\begin{equation}
+    Grip_{eff} = BaseGrip - (TyreLife \times DegRate)
+\end{equation}
+
+\subsection{Abbildungsplatzhalter}
+\begin{figure}[htbp]
+    \caption{Datenpipeline und Feature-Engineering (Platzhalter)}
+    \centering
+    \fbox{\parbox[c][5cm][c]{0.85\textwidth}{\centering Platzhalter: Abbildung hier einf\"ugen}}
+    \caption*{Quelle: Eigene Darstellung auf Basis der FastF1-Daten.}
+\end{figure}
+
+\section{Methodik}
+F\"ur die Modellvalidierung wird ein \textit{TimeSeriesSplit} eingesetzt, der die zeitliche Ordnung der Runden respektiert und Leckagen verhindert. Pro Split wird auf fr\"uheren Rennen trainiert und auf sp\"ateren Rennen getestet. Die Datenreinigung entfernt Runden in SC-Phasen (Safety Car), um verf\"alschte Rundenzeiten nicht in das Training einflie\ss en zu lassen.
+
+\subsection{Evaluationsmetriken}
+Zur Bewertung werden MAE und RMSE verwendet:
+\begin{equation}
+    \mathrm{MAE} = \frac{1}{n}\sum_{i=1}^{n}\left|y_i - \hat{y}_i\right|
+\end{equation}
+\begin{equation}
+    \mathrm{RMSE} = \sqrt{\frac{1}{n}\sum_{i=1}^{n}\left(y_i - \hat{y}_i\right)^2}
+\end{equation}
+
+\section{Ergebnisse}
+Die Ergebnisse zeigen eine deutliche \"Uberlegenheit von XGBoost gegen\"uber dem tiefen MLP. XGBoost erreicht eine MAE von 0{,}9176~s und ein $R^2$ von 0{,}9276, w\"ahrend das MLP eine MAE von 2{,}0088~s und ein $R^2$ von 0{,}8550 erzielt.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Modellvergleich f\"ur die Rundenzeitpr\"adiktion}
+    \label{tab:model_comparison}
+    \begin{tabular}{lrrr}
+        \toprule
+        Modell & MAE (s) & RMSE (s) & $R^2$ \\
+        \midrule
+        XGBoost & 0{,}9176 & 2{,}9221 & 0{,}9276 \\
+        Deep MLP & 2{,}0088 & 4{,}1352 & 0{,}8550 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+    \caption{Modellleistung im Zeitverlauf (Platzhalter)}
+    \centering
+    \fbox{\parbox[c][5cm][c]{0.85\textwidth}{\centering Platzhalter: Abbildung hier einf\"ugen}}
+    \caption*{Quelle: Eigene Darstellung.}
+\end{figure}
+
+\section{Diskussion}
+XGBoost \"ubertrifft das MLP insbesondere bei tabellarischen Daten mit moderater Gr\"o\ss e, da baumbasierte Boosting-Modelle nichtlineare Effekte und Feature-Interaktionen effizient abbilden, weniger empfindlich gegen\"uber Skalierungen sind und mit begrenzten Datenmengen stabil trainiert werden k\"onnen. Das MLP ben\"otigt f\"ur vergleichbare Generalisierung typischerweise mehr Trainingsdaten, umfangreiche Regularisierung und hyperparametrisches Feintuning. Zudem reagiert es st\"arker auf Rauschen und heterogene Feature-Skalen, was in diesem Datenszenario die Performance reduziert.
+
+\section{Fazit und Ausblick}
+Die Untersuchung best\"atigt die Eignung von XGBoost zur Rundenzeitpr\"adiktion in der Formel~1 bei den verwendeten FastF1-Daten. Zuk\"unftige Arbeiten sollten zus\"atzliche physikalische Features, team- oder fahrerspezifische Effekte sowie probabilistische Unsicherheitsma\ss e integrieren.
+
+\clearpage
+\bibliographystyle{chicago}
+\bibliography{references}
+
+\end{document}

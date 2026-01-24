@@ -66,6 +66,7 @@ FUEL_CONSUMPTION_BY_CIRCUIT: dict[str, float] = {
 DEFAULT_FUEL_CONSUMPTION = 1.85  # kg/lap default
 MAX_FUEL_LOAD = 110.0  # kg (F1 2022+ regulations)
 TYPICAL_START_FUEL = 100.0  # kg (teams rarely use full 110kg)
+TIRE_CLIFF_LAP = 18  # heuristic lap threshold where grip drop-off accelerates
 
 
 # =============================================================================
@@ -283,6 +284,34 @@ def add_tire_degradation_features(df: pd.DataFrame, verbose: bool = True) -> pd.
     return result
 
 
+def add_tire_dropoff_features(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
+    """
+    Add non-linear tire life features to approximate the drop-off ("cliff").
+
+    Features:
+    - TyreLifeLog: log1p(TyreLife)
+    - TyreLifeSq: TyreLife^2
+    - TyreLifeCliff: max(0, TyreLife - TIRE_CLIFF_LAP)
+    """
+    result = df.copy()
+
+    if "TyreLife" not in result.columns:
+        result["TyreLife"] = np.nan
+
+    tyre_life = pd.to_numeric(result["TyreLife"], errors="coerce").astype(float)
+    result["TyreLifeLog"] = np.log1p(tyre_life.clip(lower=0))
+    result["TyreLifeSq"] = (tyre_life ** 2).astype(float)
+    result["TyreLifeCliff"] = (tyre_life - float(TIRE_CLIFF_LAP)).clip(lower=0)
+
+    if verbose:
+        print("\nTire drop-off features added:")
+        print(f"  - TyreLifeLog: log1p(TyreLife)")
+        print(f"  - TyreLifeSq: TyreLife^2")
+        print(f"  - TyreLifeCliff: max(0, TyreLife - {TIRE_CLIFF_LAP})")
+
+    return result
+
+
 def add_track_evolution_features(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
     """
     Create track evolution and session progress features.
@@ -301,19 +330,44 @@ def add_track_evolution_features(df: pd.DataFrame, verbose: bool = True) -> pd.D
     """
     result = df.copy()
 
-    # Calculate total laps per session
+    # Calculate total laps per session and cumulative laps across the field
     if "LapNumber" in result.columns and "SessionKey" in result.columns:
         result["TotalLaps"] = result.groupby("SessionKey")["LapNumber"].transform("max")
         result["SessionProgress"] = result["LapNumber"] / result["TotalLaps"].clip(lower=1)
 
-        # Track evolution proxy (logarithmic improvement model)
-        # Track gets "rubbered in" - rapid improvement early, then plateaus
-        result["TrackEvolution"] = np.log1p(result["LapNumber"]) / np.log1p(
-            result["TotalLaps"].clip(lower=1)
+        # Count laps per lap number and accumulate across the field
+        lap_counts = (
+            result.groupby(["SessionKey", "LapNumber"], dropna=False)
+            .size()
+            .reset_index(name="FieldLapCount")
+        )
+        lap_counts["CumulativeFieldLaps"] = lap_counts.groupby("SessionKey")[
+            "FieldLapCount"
+        ].cumsum()
+        lap_counts["TotalFieldLaps"] = lap_counts.groupby("SessionKey")[
+            "FieldLapCount"
+        ].transform("sum")
+        lap_counts["FieldLapProgress"] = (
+            lap_counts["CumulativeFieldLaps"]
+            / lap_counts["TotalFieldLaps"].clip(lower=1)
+        )
+
+        # Merge back to each lap
+        result = result.merge(
+            lap_counts[["SessionKey", "LapNumber", "CumulativeFieldLaps", "FieldLapProgress"]],
+            on=["SessionKey", "LapNumber"],
+            how="left",
+        )
+
+        # Track evolution proxy based on cumulative laps in the session
+        result["TrackEvolution"] = np.log1p(result["CumulativeFieldLaps"]) / np.log1p(
+            result["CumulativeFieldLaps"].groupby(result["SessionKey"]).transform("max").clip(lower=1)
         )
     else:
         result["TotalLaps"] = np.nan
         result["SessionProgress"] = np.nan
+        result["CumulativeFieldLaps"] = np.nan
+        result["FieldLapProgress"] = np.nan
         result["TrackEvolution"] = np.nan
 
     # Weather features (if available)
@@ -346,7 +400,8 @@ def add_track_evolution_features(df: pd.DataFrame, verbose: bool = True) -> pd.D
     if verbose:
         print(f"\nTrack evolution features added:")
         print(f"  - SessionProgress: LapNumber / TotalLaps (0.0 to 1.0)")
-        print(f"  - TrackEvolution: log-scaled track rubber-in effect")
+        print(f"  - FieldLapProgress: cumulative laps across the field / total laps")
+        print(f"  - TrackEvolution: log-scaled rubber-in effect (field laps)")
         if weather_features_added:
             print(f"  - Weather features: {', '.join(weather_features_added)}")
         else:
@@ -382,6 +437,7 @@ def add_physics_features(
     result = df.copy()
     result = add_fuel_load_features(result, verbose=verbose)
     result = add_tire_degradation_features(result, verbose=verbose)
+    result = add_tire_dropoff_features(result, verbose=verbose)
     result = add_track_evolution_features(result, verbose=verbose)
 
     if verbose:
@@ -453,7 +509,12 @@ def build_feature_table(
         "FuelEffect",
         "TireDegradation",
         "EstimatedGrip",
+        "TyreLifeLog",
+        "TyreLifeSq",
+        "TyreLifeCliff",
         "SessionProgress",
+        "CumulativeFieldLaps",
+        "FieldLapProgress",
         "TrackEvolution",
     ]
 
