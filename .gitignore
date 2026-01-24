@@ -7,6 +7,8 @@ env/
 data/cache/
 notebooks/data/cache/
 outputs/
+main.tex
+references.bib
 *.parquet
 *.csv
 *.png
@@ -14,5 +16,5 @@ outputs/
 !archive/notebooks/reports/*.png
 *.html
 *.sqlite
-!.claude
-!archive
+.claude
+archive/
