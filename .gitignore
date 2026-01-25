@@ -4,9 +4,11 @@ __pycache__/
 .venv/
 env/
 .env
+mlruns/
 data/cache/
 notebooks/data/cache/
 outputs/
+reports/models/
 main.tex
 references.bib
 *.parquet

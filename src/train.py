@@ -117,6 +117,83 @@ def _prepare_features(
     return train_enc, val_enc, trainval_enc, test_enc, numeric_features
 
 
+def _coerce_mlflow_params(params: Dict[str, object]) -> Dict[str, str]:
+    safe_params: Dict[str, str] = {}
+    for key, value in params.items():
+        if isinstance(value, (int, float, str, bool)):
+            safe_params[key] = str(value)
+        elif value is None:
+            safe_params[key] = "None"
+        else:
+            safe_params[key] = str(value)
+    return safe_params
+
+
+def _log_mlflow_run(
+    *,
+    output_dir: Path,
+    tune_mode: str,
+    split_config: SplitConfig,
+    metadata: Dict,
+    val_metrics: pd.DataFrame,
+    test_metrics: pd.DataFrame,
+    fitted: Dict[str, object],
+    tracking_uri: str | None,
+    experiment: str,
+    run_name: str | None,
+) -> None:
+    try:
+        import mlflow
+    except ImportError:
+        print("MLflow is not installed; skipping MLflow logging.")
+        return
+
+    if tracking_uri:
+        mlflow.set_tracking_uri(tracking_uri)
+    else:
+        default_uri = (Path(__file__).resolve().parent.parent / "mlruns").as_uri()
+        mlflow.set_tracking_uri(default_uri)
+    mlflow.set_experiment(experiment)
+
+    run_name = run_name or f"train_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+    with mlflow.start_run(run_name=run_name):
+        mlflow.log_param("tune_mode", tune_mode)
+        mlflow.log_param("test_rounds", split_config.test_rounds)
+        mlflow.log_param("dataset", metadata.get("dataset", ""))
+        mlflow.log_param("seasons", metadata.get("seasons", []))
+        mlflow.log_param("include_physics", metadata.get("include_physics", ""))
+        mlflow.log_param("exclude_lap1", metadata.get("exclude_lap1", ""))
+
+        # Metrics + params per model (nested runs)
+        for model_name, estimator in fitted.items():
+            with mlflow.start_run(run_name=model_name, nested=True):
+                # Log best params when available, else log model params only
+                if hasattr(estimator, "best_params_"):
+                    params = estimator.best_params_  # type: ignore[assignment]
+                elif hasattr(estimator, "get_params"):
+                    params = {
+                        k: v for k, v in estimator.get_params().items()
+                        if k.startswith("model__")
+                    }
+                else:
+                    params = {}
+                mlflow.log_params(_coerce_mlflow_params(params))
+
+                row_val = val_metrics[val_metrics["model"] == model_name].iloc[0]
+                row_test = test_metrics[test_metrics["model"] == model_name].iloc[0]
+                for metric in ("mae", "rmse", "r2"):
+                    mlflow.log_metric(f"val_{metric}", float(row_val[metric]))
+                    mlflow.log_metric(f"test_{metric}", float(row_test[metric]))
+
+        # Artifacts
+        for path in output_dir.glob("*.csv"):
+            mlflow.log_artifact(str(path), artifact_path="reports")
+        for path in output_dir.glob("*.png"):
+            mlflow.log_artifact(str(path), artifact_path="plots")
+        for path in output_dir.glob("*.html"):
+            mlflow.log_artifact(str(path), artifact_path="plots")
+
+
 def run_training(
     dataset_path: Path,
     metadata_path: Path,
@@ -125,6 +202,10 @@ def run_training(
     seed: int,
     split_config: SplitConfig,
     output_dir: Path,
+    mlflow_enabled: bool,
+    mlflow_uri: str | None,
+    mlflow_experiment: str,
+    mlflow_run_name: str | None,
 ) -> None:
     df = pd.read_parquet(dataset_path)
     metadata = _load_metadata(metadata_path)
@@ -189,6 +270,20 @@ def run_training(
         )
         save_plot(fig, output_dir / "error_by_circuit")
 
+    if mlflow_enabled:
+        _log_mlflow_run(
+            output_dir=output_dir,
+            tune_mode=tune_mode,
+            split_config=split_config,
+            metadata=metadata,
+            val_metrics=val_metrics,
+            test_metrics=test_metrics,
+            fitted=fitted,
+            tracking_uri=mlflow_uri,
+            experiment=mlflow_experiment,
+            run_name=mlflow_run_name,
+        )
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="F1 lap time pipeline (build + train).")
@@ -202,6 +297,10 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--test-rounds", type=int, default=6)
     parser.add_argument("--output-dir", type=str, default="reports")
+    parser.add_argument("--mlflow", action="store_true", help="Enable MLflow tracking.")
+    parser.add_argument("--mlflow-uri", type=str, default=None, help="MLflow tracking URI.")
+    parser.add_argument("--mlflow-exp", type=str, default="f1-laptime", help="MLflow experiment name.")
+    parser.add_argument("--mlflow-run-name", type=str, default=None, help="MLflow run name override.")
     args = parser.parse_args()
 
     dataset_path = Path(args.dataset)
@@ -230,6 +329,10 @@ def main() -> None:
             seed=args.seed,
             split_config=split_config,
             output_dir=Path(args.output_dir),
+            mlflow_enabled=args.mlflow,
+            mlflow_uri=args.mlflow_uri,
+            mlflow_experiment=args.mlflow_exp,
+            mlflow_run_name=args.mlflow_run_name,
         )
 
 

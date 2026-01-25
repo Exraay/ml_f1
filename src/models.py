@@ -319,8 +319,8 @@ def make_pipeline(model: object, numeric_features: Iterable[str]) -> Pipeline:
     return Pipeline(steps=[("preprocess", preprocessor), ("model", model)])
 
 
-def make_linear_model(random_state: int) -> Ridge:
-    return Ridge(alpha=1.0, random_state=random_state)
+def make_linear_model(random_state: int, *, alpha: float | None = None) -> Ridge:
+    return Ridge(alpha=1.0 if alpha is None else float(alpha), random_state=random_state)
 
 
 def make_xgboost_model(random_state: int, **params: Any) -> object:
@@ -358,6 +358,8 @@ def make_mlp_model(
     epochs: int | None = None,
     batch_size: int | None = None,
     dropout: float | None = None,
+    lr: float | None = None,
+    weight_decay: float | None = None,
     device: str | None = None,
 ) -> TorchMLPRegressor:
     return TorchMLPRegressor(
@@ -366,6 +368,8 @@ def make_mlp_model(
         epochs=150 if epochs is None else int(epochs),
         batch_size=256 if batch_size is None else int(batch_size),
         patience=20,
+        lr=1e-3 if lr is None else float(lr),
+        weight_decay=1e-4 if weight_decay is None else float(weight_decay),
         random_state=random_state,
         device=device,
         verbose=verbose,
