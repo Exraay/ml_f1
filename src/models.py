@@ -111,6 +111,7 @@ class TorchMLPRegressor(BaseEstimator, RegressorMixin):
             device = torch.device(self.device)
         else:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device_ = str(device)
 
         train_dataset = TensorDataset(
             torch.from_numpy(X_train), torch.from_numpy(y_train)
@@ -152,6 +153,23 @@ class TorchMLPRegressor(BaseEstimator, RegressorMixin):
                 use_tqdm = False
         else:
             epoch_iter = range(self.epochs)
+
+        if self.verbose:
+            device_msg = f"Using device: {self.device_}"
+            if torch.cuda.is_available():
+                try:
+                    device_name = torch.cuda.get_device_name(0)
+                    device_msg = f"{device_msg} ({device_name})"
+                except Exception:  # noqa: BLE001
+                    device_msg = f"{device_msg} (CUDA available)"
+            if use_tqdm:
+                try:
+                    from tqdm.auto import tqdm as _tqdm
+                    _tqdm.write(device_msg)
+                except Exception:  # noqa: BLE001
+                    print(device_msg)
+            else:
+                print(device_msg)
 
         live_plot = None
         if self.live_plot_every and self.verbose:
@@ -375,6 +393,7 @@ def build_search(
     *,
     random_state: int,
     mode: Literal["off", "fast", "full"] = "fast",
+    param_grid: Dict[str, List[Any]] | None = None,
     n_splits: int = 4,
     n_iter: int | None = None,
     cv_splits: int | None = None,
@@ -386,9 +405,9 @@ def build_search(
     cv = TimeSeriesSplit(n_splits=cv_splits or n_splits)
 
     if model_name == "Linear":
-        param_grid = {"model__alpha": [0.1, 0.5, 1.0, 5.0, 10.0]}
+        default_param_grid = {"model__alpha": [0.1, 0.5, 1.0, 5.0, 10.0]}
     elif model_name == "XGBoost":
-        param_grid = {
+        default_param_grid = {
             "model__max_depth": [3, 4, 5, 6, 8],
             "model__learning_rate": [0.01, 0.03, 0.05, 0.1],
             "model__subsample": [0.7, 0.8, 0.9],
@@ -399,7 +418,7 @@ def build_search(
             "model__n_estimators": [300, 600, 900],
         }
     elif model_name == "Deep MLP":
-        param_grid = {
+        default_param_grid = {
             "model__hidden_layers": [(128, 64, 32), (256, 128, 64), (256, 128, 64, 32)],
             "model__dropout": [0.2, 0.3, 0.4],
             "model__lr": [5e-4, 1e-3, 2e-3],
@@ -409,6 +428,8 @@ def build_search(
         }
     else:
         return pipeline
+
+    param_grid = param_grid or default_param_grid
 
     if mode == "full":
         return GridSearchCV(
