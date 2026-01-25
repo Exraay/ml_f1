@@ -7,6 +7,7 @@ Run in order:
 4. 03_model_xgboost.ipynb
 5. 04_model_mlp.ipynb
 6. 05_model_comparison.ipynb
+7. 06_mlp_error_investigation.ipynb
 
 Notes:
 - The notebooks use Plotly for visuals.

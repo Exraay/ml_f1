@@ -336,13 +336,20 @@ def make_mlp_model(
     log_every: int = 1,
     log_batch_every: int = 0,
     live_plot_every: int = 0,
+    hidden_layers: tuple[int, ...] | None = None,
+    epochs: int | None = None,
+    batch_size: int | None = None,
+    dropout: float | None = None,
+    device: str | None = None,
 ) -> TorchMLPRegressor:
     return TorchMLPRegressor(
-        hidden_layers=(256, 128, 64, 32),
-        dropout=0.3,
-        epochs=150,
+        hidden_layers=hidden_layers or (256, 128, 64, 32),
+        dropout=0.3 if dropout is None else float(dropout),
+        epochs=150 if epochs is None else int(epochs),
+        batch_size=256 if batch_size is None else int(batch_size),
         patience=20,
         random_state=random_state,
+        device=device,
         verbose=verbose,
         log_every=log_every,
         log_batch_every=log_batch_every,
@@ -369,11 +376,14 @@ def build_search(
     random_state: int,
     mode: Literal["off", "fast", "full"] = "fast",
     n_splits: int = 4,
+    n_iter: int | None = None,
+    cv_splits: int | None = None,
+    search_verbose: int = 1,
 ) -> object:
     if mode == "off":
         return pipeline
 
-    cv = TimeSeriesSplit(n_splits=n_splits)
+    cv = TimeSeriesSplit(n_splits=cv_splits or n_splits)
 
     if model_name == "Linear":
         param_grid = {"model__alpha": [0.1, 0.5, 1.0, 5.0, 10.0]}
@@ -407,18 +417,18 @@ def build_search(
             cv=cv,
             scoring="neg_mean_absolute_error",
             n_jobs=-1,
-            verbose=1,
+            verbose=search_verbose,
             refit=True,
         )
 
     return RandomizedSearchCV(
         pipeline,
         param_distributions=param_grid,
-        n_iter=min(12, sum(len(v) for v in param_grid.values())),
+        n_iter=n_iter or min(12, sum(len(v) for v in param_grid.values())),
         cv=cv,
         scoring="neg_mean_absolute_error",
         n_jobs=-1,
         random_state=random_state,
-        verbose=1,
+        verbose=search_verbose,
         refit=True,
     )
