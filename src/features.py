@@ -98,6 +98,8 @@ TIRE_BASE_GRIP: dict[str, float] = {
     "UNKNOWN": 0.97,
 }
 
+VALID_TIRE_COMPOUNDS = {"SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET"}
+
 
 def _get_fuel_consumption_rate(circuit: str) -> float:
     """Get fuel consumption rate for a circuit, with fuzzy matching."""
@@ -551,13 +553,20 @@ def build_feature_table(
         df["Compound"]
         .str.upper()
         .str.strip()
-        .replace({"NAN": "UNKNOWN", "NONE": "UNKNOWN", "": "UNKNOWN"})
+        .replace({"NAN": "", "NONE": "", "": ""})
     )
+    df.loc[~df["Compound"].isin(VALID_TIRE_COMPOUNDS), "Compound"] = np.nan
     df["EventName"] = df["EventName"].astype(str).replace({"nan": "UNKNOWN", "None": "UNKNOWN"})
     if "Circuit" in df.columns:
         df["Circuit"] = df["Circuit"].astype(str).replace({"nan": "UNKNOWN", "None": "UNKNOWN"})
     else:
         df["Circuit"] = df["EventName"]
+
+    # Drop rows with invalid/unknown compound values (faulty data)
+    before = len(df)
+    df = df[df["Compound"].notna()].copy()
+    if verbose and len(df) != before:
+        print(f"\nDropped {before - len(df):,} rows with invalid/unknown Compound.")
 
     # Apply physics-based features
     if include_physics:
@@ -567,12 +576,11 @@ def build_feature_table(
     if balance_categories:
         if balance_category_cols is None:
             balance_category_cols = [
-                "Compound",
                 "TrackStatusFlag",
                 "TireAgeCategory",
             ]
-        if "Compound" in balance_category_cols and "Compound" in df.columns:
-            df["Compound"] = df["Compound"].replace({"INTERMEDIATE": "WET", "UNKNOWN": "OTHER"})
+        if "Compound" in balance_category_cols:
+            balance_category_cols = [c for c in balance_category_cols if c != "Compound"]
         df = coalesce_rare_categories(
             df,
             balance_category_cols,

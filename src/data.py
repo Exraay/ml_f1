@@ -211,16 +211,34 @@ def _load_race_session(session_id: SessionIdentifier) -> pd.DataFrame:
         return Session(event, "Race", f1_api_support=True)
 
     try:
-        session = fastf1.get_session(session_id.season, session_id.event_name, "R")
+        session = fastf1.get_session(session_id.season, session_id.round_number, "R")
     except Exception:
         try:
-            session = fastf1.get_session(session_id.season, session_id.round_number, "R")
+            session = fastf1.get_session(session_id.season, session_id.event_name, "R")
         except Exception:
             session = _build_session_from_cache()
     session.load(telemetry=False, weather=True, laps=True)
     laps = session.laps.copy()
     if laps.empty:
         return laps
+
+    # Merge weather data onto laps by LapStartTime
+    if hasattr(session, "weather_data") and not session.weather_data.empty:
+        weather = session.weather_data.copy()
+        if "Time" in weather.columns and "LapStartTime" in laps.columns:
+            weather_cols = ["AirTemp", "TrackTemp", "Humidity", "Rainfall"]
+            weather = weather[["Time"] + [c for c in weather_cols if c in weather.columns]]
+            weather = weather.dropna(subset=["Time"]).sort_values("Time")
+            laps = laps.drop(columns=[c for c in weather_cols if c in laps.columns], errors="ignore")
+            laps = laps.sort_values("LapStartTime")
+            laps = pd.merge_asof(
+                laps,
+                weather,
+                left_on="LapStartTime",
+                right_on="Time",
+                direction="nearest",
+            )
+            laps = laps.drop(columns=["Time"], errors="ignore")
 
     laps["Season"] = session_id.season
     laps["RoundNumber"] = session_id.round_number

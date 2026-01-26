@@ -18,7 +18,31 @@ python -m src.train --build-data
 
 This creates:
 - `data/processed/laps_base.parquet` (cleaned + engineered features)
+- `data/processed/laps_base.csv` (same dataset as CSV)
 - `data/processed/laps_base.metadata.json` (feature lists, filters, seasons)
+
+You can switch dataset file types as you prefer:
+- **Notebooks**: edit `DATA_FORMAT` in `notebooks/_common.py` (`"parquet"` or `"csv"`).
+- **CLI**: pass `--dataset data/processed/laps_base.csv` to use the CSV file.
+
+## Dataset (what is loaded and what happens)
+
+**FastF1 implementation notes**
+- Loading: `fastf1.get_session(year, round, "R")` and `session.load(laps=True, weather=True)`.
+- Caching: `fastf1.Cache` is always enabled before loading (see `src.data.enable_cache()`).
+- Merge: Weather data (`TrackTemp`, `AirTemp`, etc.) is joined onto laps using `LapStartTime`.
+
+**Pipeline steps**
+1. **Load** race laps for each season (2022-2025 by default).
+2. **Clean**: drop inaccurate laps, pit in/out laps, SC/VSC/Red Flag laps, deleted laps, formation laps, and optional Lap 1; remove high-side outliers via robust MAD z-score.
+3. **Feature engineering**:
+   - Lags and rolling mean (`LapTimeLag1/2/3`, `RollingMean3`)
+   - Physics-inspired features (fuel load, tire degradation, track evolution)
+   - Tire age category buckets
+4. **Categorical handling**:
+   - Valid tire compounds only (SOFT/MEDIUM/HARD/INTERMEDIATE/WET); invalid/unknown rows are dropped.
+   - Rare categories can be collapsed for `TrackStatusFlag` and `TireAgeCategory` only.
+5. **Metadata**: saved alongside the dataset with feature lists and build parameters.
 
 ### Train + evaluate (with tuning)
 
@@ -90,7 +114,7 @@ This repo uses `src.models.build_search()` to wrap each model in a CV search whe
 
 ## Data split (apples-to-apples)
 
-- **Train**: 2022–2023
+- **Train**: 2022-2023
 - **Validation**: 2024
 - **Test**: first N races of 2025 (default: 6)
 

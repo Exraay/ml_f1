@@ -14,7 +14,10 @@ from src.encoding import apply_target_encoding
 from src.split import SplitConfig, split_by_season_round
 
 ROOT = Path(__file__).resolve().parents[1]
-DATASET_PATH = ROOT / "data" / "processed" / "laps_base.parquet"
+DATA_FORMAT = "parquet"  # "parquet" or "csv"
+DATASET_PARQUET_PATH = ROOT / "data" / "processed" / "laps_base.parquet"
+DATASET_CSV_PATH = ROOT / "data" / "processed" / "laps_base.csv"
+DATASET_PATH = DATASET_PARQUET_PATH if DATA_FORMAT == "parquet" else DATASET_CSV_PATH
 METADATA_PATH = ROOT / "data" / "processed" / "laps_base.metadata.json"
 TARGET_COL = "LapTimeSeconds"
 
@@ -49,10 +52,13 @@ def build_dataset_if_missing(
         verbose=True,
     )
     DATASET_PATH.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(DATASET_PATH, index=False)
+    df.to_parquet(DATASET_PARQUET_PATH, index=False)
+    df.to_csv(DATASET_CSV_PATH, index=False)
     metadata = {
         "created_at": datetime.utcnow().isoformat(),
-        "dataset": str(DATASET_PATH.as_posix()),
+        "dataset": str(DATASET_PARQUET_PATH.as_posix()),
+        "dataset_csv": str(DATASET_CSV_PATH.as_posix()),
+        "compound_filter": "valid_only",
         "seasons": years,
         "include_physics": include_physics,
         "exclude_lap1": exclude_lap1,
@@ -71,7 +77,10 @@ def build_dataset_if_missing(
 
 
 def load_dataset() -> Tuple[pd.DataFrame, Dict]:
-    df = pd.read_parquet(DATASET_PATH)
+    if DATA_FORMAT == "csv":
+        df = pd.read_csv(DATASET_CSV_PATH)
+    else:
+        df = pd.read_parquet(DATASET_PARQUET_PATH)
     metadata = json.loads(METADATA_PATH.read_text(encoding="utf-8"))
     return df, metadata
 

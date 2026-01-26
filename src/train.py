@@ -68,11 +68,18 @@ def build_and_save_dataset(
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(output_path, index=False)
+    suffix = output_path.suffix.lower()
+    parquet_path = output_path if suffix == ".parquet" else output_path.with_suffix(".parquet")
+    csv_path = output_path if suffix == ".csv" else output_path.with_suffix(".csv")
+
+    df.to_parquet(parquet_path, index=False)
+    df.to_csv(csv_path, index=False)
 
     metadata = {
         "created_at": datetime.utcnow().isoformat(),
-        "dataset": str(output_path.as_posix()),
+        "dataset": str(parquet_path.as_posix()),
+        "dataset_csv": str(csv_path.as_posix()),
+        "compound_filter": "valid_only",
         "seasons": years,
         "include_physics": include_physics,
         "exclude_lap1": exclude_lap1,
@@ -225,7 +232,10 @@ def run_training(
     mlflow_experiment: str,
     mlflow_run_name: str | None,
 ) -> None:
-    df = pd.read_parquet(dataset_path)
+    if dataset_path.suffix.lower() == ".csv":
+        df = pd.read_csv(dataset_path)
+    else:
+        df = pd.read_parquet(dataset_path)
     metadata = _load_metadata(metadata_path)
 
     train_df, val_df, trainval_df, test_df, numeric_features = _prepare_features(
