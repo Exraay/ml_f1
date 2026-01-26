@@ -134,6 +134,41 @@ def _track_status_bucket(status: str | float | int) -> str:
     return "green"
 
 
+def coalesce_rare_categories(
+    df: pd.DataFrame,
+    cols: List[str],
+    *,
+    min_count: int = 50,
+    other_label: str = "OTHER",
+    verbose: bool = True,
+) -> pd.DataFrame:
+    """
+    Collapse rare categories into a single label to reduce extreme sparsity.
+    """
+    result = df.copy()
+    summary = {}
+    for col in cols:
+        if col not in result.columns:
+            continue
+        counts = result[col].value_counts(dropna=False)
+        rare = counts[counts < int(min_count)].index
+        if len(rare) > 0:
+            result[col] = result[col].where(~result[col].isin(rare), other_label)
+            summary[col] = {
+                "rare_classes": int(len(rare)),
+                "rows_replaced": int(counts.loc[rare].sum()),
+            }
+
+    if verbose and summary:
+        print("\nCategory balancing (rare -> OTHER):")
+        for col, stats in summary.items():
+            print(
+                f"  - {col}: {stats['rows_replaced']:,} rows from "
+                f"{stats['rare_classes']:,} rare classes"
+            )
+    return result
+
+
 def add_lap_time_features(laps: pd.DataFrame) -> pd.DataFrame:
     """
     Add target and history-based timing features.
@@ -333,35 +368,62 @@ def add_track_evolution_features(df: pd.DataFrame, verbose: bool = True) -> pd.D
     # Calculate total laps per session and cumulative laps across the field
     if "LapNumber" in result.columns and "SessionKey" in result.columns:
         result["TotalLaps"] = result.groupby("SessionKey")["LapNumber"].transform("max")
-        result["SessionProgress"] = result["LapNumber"] / result["TotalLaps"].clip(lower=1)
 
-        # Count laps per lap number and accumulate across the field
+        # Use t-1 for progress to avoid including current lap information
+        lap_num = pd.to_numeric(result["LapNumber"], errors="coerce").fillna(0)
+        result["SessionProgress"] = (lap_num - 1).clip(lower=0) / result["TotalLaps"].clip(lower=1)
+
+        # Count laps per lap number and accumulate across the field (t-1)
         lap_counts = (
             result.groupby(["SessionKey", "LapNumber"], dropna=False)
             .size()
             .reset_index(name="FieldLapCount")
+            .sort_values(["SessionKey", "LapNumber"])
         )
-        lap_counts["CumulativeFieldLaps"] = lap_counts.groupby("SessionKey")[
-            "FieldLapCount"
-        ].cumsum()
-        lap_counts["TotalFieldLaps"] = lap_counts.groupby("SessionKey")[
-            "FieldLapCount"
-        ].transform("sum")
+
+        lap_counts["CumulativeFieldLaps"] = (
+            lap_counts.groupby("SessionKey")["FieldLapCount"]
+            .cumsum()
+            .shift(1)
+            .fillna(0)
+        )
+
+        # Expected total field laps based on starting grid size (no future info)
+        starters = (
+            result[result["LapNumber"] == 1]
+            .groupby("SessionKey")
+            .size()
+            .rename("StartDrivers")
+            .reset_index()
+        )
+        lap_counts = lap_counts.merge(starters, on="SessionKey", how="left")
+        lap_counts["StartDrivers"] = lap_counts["StartDrivers"].fillna(0)
+        lap_counts["ExpectedFieldLaps"] = (
+            lap_counts["StartDrivers"] * lap_counts.groupby("SessionKey")["LapNumber"].transform("max")
+        )
+
         lap_counts["FieldLapProgress"] = (
             lap_counts["CumulativeFieldLaps"]
-            / lap_counts["TotalFieldLaps"].clip(lower=1)
+            / lap_counts["ExpectedFieldLaps"].clip(lower=1)
+        )
+
+        lap_counts["TrackEvolution"] = np.log1p(lap_counts["CumulativeFieldLaps"]) / np.log1p(
+            lap_counts["ExpectedFieldLaps"].clip(lower=1)
         )
 
         # Merge back to each lap
         result = result.merge(
-            lap_counts[["SessionKey", "LapNumber", "CumulativeFieldLaps", "FieldLapProgress"]],
+            lap_counts[
+                [
+                    "SessionKey",
+                    "LapNumber",
+                    "CumulativeFieldLaps",
+                    "FieldLapProgress",
+                    "TrackEvolution",
+                ]
+            ],
             on=["SessionKey", "LapNumber"],
             how="left",
-        )
-
-        # Track evolution proxy based on cumulative laps in the session
-        result["TrackEvolution"] = np.log1p(result["CumulativeFieldLaps"]) / np.log1p(
-            result["CumulativeFieldLaps"].groupby(result["SessionKey"]).transform("max").clip(lower=1)
         )
     else:
         result["TotalLaps"] = np.nan
@@ -399,9 +461,9 @@ def add_track_evolution_features(df: pd.DataFrame, verbose: bool = True) -> pd.D
 
     if verbose:
         print(f"\nTrack evolution features added:")
-        print(f"  - SessionProgress: LapNumber / TotalLaps (0.0 to 1.0)")
-        print(f"  - FieldLapProgress: cumulative laps across the field / total laps")
-        print(f"  - TrackEvolution: log-scaled rubber-in effect (field laps)")
+        print(f"  - SessionProgress: (LapNumber - 1) / TotalLaps (0.0 to 1.0)")
+        print(f"  - FieldLapProgress: cumulative field laps up to t-1 / expected total field laps")
+        print(f"  - TrackEvolution: log-scaled rubber-in effect using t-1 field laps")
         if weather_features_added:
             print(f"  - Weather features: {', '.join(weather_features_added)}")
         else:
@@ -449,6 +511,9 @@ def add_physics_features(
 def build_feature_table(
     clean_laps: pd.DataFrame,
     include_physics: bool = True,
+    balance_categories: bool = True,
+    balance_category_cols: List[str] | None = None,
+    min_category_count: int = 50,
     verbose: bool = True,
 ) -> Tuple[pd.DataFrame, List[str], List[str]]:
     """
@@ -473,24 +538,48 @@ def build_feature_table(
     df["TrackStatusFlag"] = df["TrackStatus"].apply(_track_status_bucket)
 
     # Ensure categories are strings to work with OneHotEncoder/TargetEncoder
-    df["Driver"] = df["Driver"].astype(str)
+    df["Driver"] = df["Driver"].astype(str).replace({"nan": "UNKNOWN", "None": "UNKNOWN"})
     if "Team" in df.columns:
-        df["Team"] = df["Team"].astype(str)
+        df["Team"] = df["Team"].astype(str).replace({"nan": "UNKNOWN", "None": "UNKNOWN"})
     elif "TeamName" in df.columns:
-        df["Team"] = df["TeamName"].astype(str)
+        df["Team"] = df["TeamName"].astype(str).replace({"nan": "UNKNOWN", "None": "UNKNOWN"})
     else:
         df["Team"] = "unknown"
 
     df["Compound"] = df["Compound"].fillna("UNKNOWN").astype(str)
-    df["EventName"] = df["EventName"].astype(str)
+    df["Compound"] = (
+        df["Compound"]
+        .str.upper()
+        .str.strip()
+        .replace({"NAN": "UNKNOWN", "NONE": "UNKNOWN", "": "UNKNOWN"})
+    )
+    df["EventName"] = df["EventName"].astype(str).replace({"nan": "UNKNOWN", "None": "UNKNOWN"})
     if "Circuit" in df.columns:
-        df["Circuit"] = df["Circuit"].astype(str)
+        df["Circuit"] = df["Circuit"].astype(str).replace({"nan": "UNKNOWN", "None": "UNKNOWN"})
     else:
         df["Circuit"] = df["EventName"]
 
     # Apply physics-based features
     if include_physics:
         df = add_physics_features(df, verbose=verbose)
+
+    # Balance categorical classes by collapsing rare categories
+    if balance_categories:
+        if balance_category_cols is None:
+            balance_category_cols = [
+                "Compound",
+                "TrackStatusFlag",
+                "TireAgeCategory",
+            ]
+        if "Compound" in balance_category_cols and "Compound" in df.columns:
+            df["Compound"] = df["Compound"].replace({"INTERMEDIATE": "WET", "UNKNOWN": "OTHER"})
+        df = coalesce_rare_categories(
+            df,
+            balance_category_cols,
+            min_count=min_category_count,
+            other_label="OTHER",
+            verbose=verbose,
+        )
 
     # Base numeric features
     numeric_features: List[str] = [
@@ -538,7 +627,11 @@ def build_feature_table(
 
     # Add TireAgeCategory if physics features enabled
     if include_physics and "TireAgeCategory" in df.columns:
-        df["TireAgeCategory"] = df["TireAgeCategory"].astype(str)
+        df["TireAgeCategory"] = (
+            df["TireAgeCategory"]
+            .astype(str)
+            .replace({"nan": "UNKNOWN", "None": "UNKNOWN", "": "UNKNOWN"})
+        )
         categorical_features.append("TireAgeCategory")
 
     metadata_cols = ["Season", "RoundNumber", "EventName", "SessionKey"]

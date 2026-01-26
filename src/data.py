@@ -6,6 +6,7 @@ from typing import Iterable, List, Optional, Tuple
 
 import fastf1
 import pandas as pd
+import numpy as np
 from tqdm import tqdm
 
 from src.features import build_feature_table
@@ -36,8 +37,87 @@ def enable_cache(cache_dir: Path | str | None = None) -> Path:
     return cache_path
 
 
-def iter_race_sessions(years: Iterable[int]) -> Iterable[SessionIdentifier]:
+def _iter_race_sessions_from_cache(year: int, cache_dir: Path) -> Iterable[SessionIdentifier]:
+    year_dir = cache_dir / str(year)
+    if not year_dir.exists():
+        return []
+
+    entries = []
+    for session_info_path in year_dir.rglob("session_info.ff1pkl"):
+        if not session_info_path.parent.name.endswith("_Race"):
+            continue
+        try:
+            info = pd.read_pickle(session_info_path)
+        except Exception:  # noqa: BLE001
+            continue
+
+        data = info.get("data", {}) if isinstance(info, dict) else {}
+        meeting = data.get("Meeting", {})
+        event_name = str(meeting.get("Name", "")).strip()
+        if not event_name:
+            continue
+
+        round_number = meeting.get("Number", None)
+        start_date = data.get("StartDate", None)
+        if start_date is None:
+            try:
+                folder_date = session_info_path.parent.parent.name.split("_", maxsplit=1)[0]
+                start_date = pd.to_datetime(folder_date)
+            except Exception:  # noqa: BLE001
+                start_date = pd.NaT
+
+        location = None
+        if "Location" in meeting:
+            location = str(meeting.get("Location"))
+        elif "Circuit" in meeting and isinstance(meeting["Circuit"], dict):
+            location = str(meeting["Circuit"].get("ShortName", ""))
+
+        entries.append(
+            {
+                "event_name": event_name,
+                "round_number": round_number,
+                "start_date": start_date,
+                "location": location,
+            }
+        )
+
+    if not entries:
+        return []
+
+    # Sort by date and assign round numbers; if any are missing, use sequence for all
+    entries = sorted(entries, key=lambda x: (pd.to_datetime(x["start_date"], errors="coerce"), x["event_name"]))
+    use_sequence = any(entry["round_number"] is None for entry in entries)
+    sessions = []
+    for idx, entry in enumerate(entries, start=1):
+        rnd = idx if use_sequence else entry["round_number"]
+        sessions.append(
+            SessionIdentifier(
+                season=year,
+                round_number=int(rnd),
+                event_name=entry["event_name"],
+                location=entry["location"],
+            )
+        )
+
+    return sessions
+
+
+def iter_race_sessions(
+    years: Iterable[int],
+    cache_dir: Path | str | None = None,
+    prefer_cache: bool = True,
+) -> Iterable[SessionIdentifier]:
+    cache_path = Path(cache_dir) if cache_dir else DEFAULT_CACHE_DIR
+
     for year in years:
+        cached = list(_iter_race_sessions_from_cache(year, cache_path))
+        if cached:
+            print(f"Using cached schedule for season {year} ({len(cached)} races).")
+            for session_id in cached:
+                yield session_id
+            if prefer_cache:
+                continue
+
         schedule = None
         last_exc: Exception | None = None
         for backend in SCHEDULE_BACKENDS:
@@ -51,8 +131,15 @@ def iter_race_sessions(years: Iterable[int]) -> Iterable[SessionIdentifier]:
                 continue
 
         if schedule is None:
-            print(f"Skipping season {year}: {last_exc}")
+            cached = list(_iter_race_sessions_from_cache(year, cache_path))
+            if cached:
+                print(f"Using cached schedule for season {year} ({len(cached)} races).")
+                for session_id in cached:
+                    yield session_id
+            else:
+                print(f"Skipping season {year}: {last_exc}")
             continue
+
         for _, event in schedule.iterrows():
             round_number = int(event["RoundNumber"])
             event_name = str(event["EventName"])
@@ -70,7 +157,66 @@ def iter_race_sessions(years: Iterable[int]) -> Iterable[SessionIdentifier]:
 
 
 def _load_race_session(session_id: SessionIdentifier) -> pd.DataFrame:
-    session = fastf1.get_session(session_id.season, session_id.round_number, "R")
+    def _build_session_from_cache() -> "fastf1.core.Session":
+        from fastf1.events import Event
+        from fastf1.core import Session
+
+        cache_dir = DEFAULT_CACHE_DIR / str(session_id.season)
+        session_info_path = None
+        for path in cache_dir.rglob("session_info.ff1pkl"):
+            if not path.parent.name.endswith("_Race"):
+                continue
+            try:
+                info = pd.read_pickle(path)
+            except Exception:  # noqa: BLE001
+                continue
+            data = info.get("data", {}) if isinstance(info, dict) else {}
+            meeting = data.get("Meeting", {})
+            if str(meeting.get("Name", "")).strip() == session_id.event_name:
+                session_info_path = path
+                break
+
+        if session_info_path is None:
+            raise RuntimeError(f"Cached session_info not found for {session_id.event_name}")
+
+        info = pd.read_pickle(session_info_path)
+        data = info.get("data", {}) if isinstance(info, dict) else {}
+        start_date = data.get("StartDate", None)
+        start_dt = pd.to_datetime(start_date) if start_date is not None else pd.NaT
+        event_date = start_dt.normalize() if not pd.isna(start_dt) else pd.NaT
+
+        event_series = pd.Series(
+            {
+                "EventName": session_id.event_name,
+                "EventDate": event_date,
+                "Session1": "Race",
+                "Session1Date": start_dt,
+                "Session1DateUtc": start_dt,
+                "Session2": None,
+                "Session2Date": pd.NaT,
+                "Session2DateUtc": pd.NaT,
+                "Session3": None,
+                "Session3Date": pd.NaT,
+                "Session3DateUtc": pd.NaT,
+                "Session4": None,
+                "Session4Date": pd.NaT,
+                "Session4DateUtc": pd.NaT,
+                "Session5": None,
+                "Session5Date": pd.NaT,
+                "Session5DateUtc": pd.NaT,
+                "EventFormat": "conventional",
+            }
+        )
+        event = Event(event_series, year=session_id.season)
+        return Session(event, "Race", f1_api_support=True)
+
+    try:
+        session = fastf1.get_session(session_id.season, session_id.event_name, "R")
+    except Exception:
+        try:
+            session = fastf1.get_session(session_id.season, session_id.round_number, "R")
+        except Exception:
+            session = _build_session_from_cache()
     session.load(telemetry=False, weather=True, laps=True)
     laps = session.laps.copy()
     if laps.empty:
@@ -96,7 +242,7 @@ def load_laps_for_seasons(
     enable_cache(cache_dir)
 
     all_laps: list[pd.DataFrame] = []
-    session_ids = list(iter_race_sessions(years))
+    session_ids = list(iter_race_sessions(years, cache_dir=cache_dir))
     if not session_ids:
         raise RuntimeError(
             "No race sessions found. FastF1 could not load any event schedules. "
@@ -128,6 +274,9 @@ def load_laps_for_seasons(
 def clean_laps(
     raw_laps: pd.DataFrame,
     exclude_lap1: bool = False,
+    remove_outliers: bool = True,
+    outlier_z: float = 6.0,
+    outlier_min_samples: int = 15,
     verbose: bool = True,
 ) -> pd.DataFrame:
     """
@@ -161,6 +310,30 @@ def clean_laps(
     if exclude_lap1 and "LapNumber" in laps.columns:
         laps = _apply_filter(laps, laps["LapNumber"] > 1, "Lap 1 (Standing Start)")
 
+    if remove_outliers and "LapTime" in laps.columns:
+        # Robust, high-side outlier removal per session+driver
+        laps["LapTimeSeconds"] = laps["LapTime"].dt.total_seconds()
+        group_cols = [c for c in ["SessionKey", "Driver"] if c in laps.columns]
+        if not group_cols:
+            group_cols = ["Season", "RoundNumber"]
+
+        def _mad(s: pd.Series) -> float:
+            if len(s) < int(outlier_min_samples):
+                return float("nan")
+            median = float(np.median(s))
+            return float(np.median(np.abs(s - median)))
+
+        med = laps.groupby(group_cols, dropna=False)["LapTimeSeconds"].transform("median")
+        mad = laps.groupby(group_cols, dropna=False)["LapTimeSeconds"].transform(_mad)
+        robust_z = 0.6745 * (laps["LapTimeSeconds"] - med) / mad
+
+        mask = (
+            mad.isna()
+            | (laps["LapTimeSeconds"] <= med)
+            | (robust_z <= float(outlier_z))
+        )
+        laps = _apply_filter(laps, mask, f"Outliers (MAD z>{outlier_z})")
+
     laps.reset_index(drop=True, inplace=True)
 
     if verbose and filter_stats:
@@ -188,14 +361,32 @@ def build_base_dataset(
     cache_dir: Path | str | None = None,
     include_physics: bool = True,
     exclude_lap1: bool = False,
+    remove_outliers: bool = True,
+    outlier_z: float = 6.0,
+    outlier_min_samples: int = 15,
+    balance_categories: bool = True,
+    balance_category_cols: List[str] | None = None,
+    min_category_count: int = 50,
     verbose: bool = True,
 ) -> Tuple[pd.DataFrame, List[str], List[str]]:
     """
     Build the base, split-safe dataset with engineered features.
     """
     raw = load_laps_for_seasons(years, cache_dir=cache_dir)
-    clean = clean_laps(raw, exclude_lap1=exclude_lap1, verbose=verbose)
+    clean = clean_laps(
+        raw,
+        exclude_lap1=exclude_lap1,
+        remove_outliers=remove_outliers,
+        outlier_z=outlier_z,
+        outlier_min_samples=outlier_min_samples,
+        verbose=verbose,
+    )
     feature_df, numeric_features, categorical_features = build_feature_table(
-        clean, include_physics=include_physics, verbose=verbose
+        clean,
+        include_physics=include_physics,
+        balance_categories=balance_categories,
+        balance_category_cols=balance_category_cols,
+        min_category_count=min_category_count,
+        verbose=verbose,
     )
     return feature_df, numeric_features, categorical_features

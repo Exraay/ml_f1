@@ -1,6 +1,6 @@
 {
-  "created_at": "2026-01-24T21:35:15.777641",
-  "dataset": "C:/Users/tvcar/Desktop/FOM/2. Semester/Maschinelles Lernen/ml_f1/data/processed/laps_base.parquet",
+  "created_at": "2026-01-26T02:07:58.866072",
+  "dataset": "c:/Users/tvcar/Desktop/FOM/2. Semester/Maschinelles Lernen/ml_f1/data/processed/laps_base.parquet",
   "seasons": [
     2022,
     2023,
@@ -9,6 +9,12 @@
   ],
   "include_physics": true,
   "exclude_lap1": false,
+  "remove_outliers": true,
+  "outlier_z": 6.0,
+  "outlier_min_samples": 15,
+  "balance_categories": true,
+  "balance_category_cols": null,
+  "min_category_count": 50,
   "target": "LapTimeSeconds",
   "numeric_features": [
     "LapNumber",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -18,17 +19,49 @@ METADATA_PATH = ROOT / "data" / "processed" / "laps_base.metadata.json"
 TARGET_COL = "LapTimeSeconds"
 
 
-def build_dataset_if_missing(years: List[int] | None = None) -> Tuple[pd.DataFrame, Dict]:
-    if DATASET_PATH.exists() and METADATA_PATH.exists():
+def build_dataset_if_missing(
+    years: List[int] | None = None,
+    *,
+    rebuild: bool = False,
+    include_physics: bool = True,
+    exclude_lap1: bool = False,
+    remove_outliers: bool = True,
+    outlier_z: float = 6.0,
+    outlier_min_samples: int = 15,
+    balance_categories: bool = True,
+    balance_category_cols: List[str] | None = None,
+    min_category_count: int = 50,
+) -> Tuple[pd.DataFrame, Dict]:
+    if not rebuild and DATASET_PATH.exists() and METADATA_PATH.exists():
         return load_dataset()
 
     years = years or [2022, 2023, 2024, 2025]
-    df, numeric_features, categorical_features = build_base_dataset(years)
+    df, numeric_features, categorical_features = build_base_dataset(
+        years,
+        include_physics=include_physics,
+        exclude_lap1=exclude_lap1,
+        remove_outliers=remove_outliers,
+        outlier_z=outlier_z,
+        outlier_min_samples=outlier_min_samples,
+        balance_categories=balance_categories,
+        balance_category_cols=balance_category_cols,
+        min_category_count=min_category_count,
+        verbose=True,
+    )
     DATASET_PATH.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(DATASET_PATH, index=False)
     metadata = {
+        "created_at": datetime.utcnow().isoformat(),
         "dataset": str(DATASET_PATH.as_posix()),
         "seasons": years,
+        "include_physics": include_physics,
+        "exclude_lap1": exclude_lap1,
+        "remove_outliers": remove_outliers,
+        "outlier_z": outlier_z,
+        "outlier_min_samples": outlier_min_samples,
+        "balance_categories": balance_categories,
+        "balance_category_cols": balance_category_cols,
+        "min_category_count": min_category_count,
         "target": TARGET_COL,
         "numeric_features": numeric_features,
         "categorical_features": categorical_features,

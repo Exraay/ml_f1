@@ -46,12 +46,24 @@ def build_and_save_dataset(
     metadata_path: Path = DEFAULT_METADATA,
     include_physics: bool = True,
     exclude_lap1: bool = False,
+    remove_outliers: bool = True,
+    outlier_z: float = 6.0,
+    outlier_min_samples: int = 15,
+    balance_categories: bool = True,
+    balance_category_cols: List[str] | None = None,
+    min_category_count: int = 50,
     verbose: bool = True,
 ) -> Tuple[pd.DataFrame, Dict]:
     df, numeric_features, categorical_features = build_base_dataset(
         years,
         include_physics=include_physics,
         exclude_lap1=exclude_lap1,
+        remove_outliers=remove_outliers,
+        outlier_z=outlier_z,
+        outlier_min_samples=outlier_min_samples,
+        balance_categories=balance_categories,
+        balance_category_cols=balance_category_cols,
+        min_category_count=min_category_count,
         verbose=verbose,
     )
 
@@ -64,6 +76,12 @@ def build_and_save_dataset(
         "seasons": years,
         "include_physics": include_physics,
         "exclude_lap1": exclude_lap1,
+        "remove_outliers": remove_outliers,
+        "outlier_z": outlier_z,
+        "outlier_min_samples": outlier_min_samples,
+        "balance_categories": balance_categories,
+        "balance_category_cols": balance_category_cols,
+        "min_category_count": min_category_count,
         "target": TARGET_COL,
         "numeric_features": numeric_features,
         "categorical_features": categorical_features,
@@ -293,6 +311,11 @@ def main() -> None:
     parser.add_argument("--metadata", type=str, default=str(DEFAULT_METADATA))
     parser.add_argument("--years", type=int, nargs="+", default=[2022, 2023, 2024, 2025])
     parser.add_argument("--exclude-lap1", action="store_true")
+    parser.add_argument("--no-outlier-removal", action="store_true", help="Disable robust outlier removal.")
+    parser.add_argument("--outlier-z", type=float, default=6.0, help="Robust z-threshold for outlier removal.")
+    parser.add_argument("--outlier-min-samples", type=int, default=15, help="Min samples per group for outlier stats.")
+    parser.add_argument("--no-balance-categories", action="store_true", help="Disable category balancing.")
+    parser.add_argument("--min-category-count", type=int, default=50, help="Min count for rare-category collapse.")
     parser.add_argument("--tune", type=str, default="fast", choices=["off", "fast", "full"])
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--test-rounds", type=int, default=6)
@@ -312,6 +335,11 @@ def main() -> None:
             output_path=dataset_path,
             metadata_path=metadata_path,
             exclude_lap1=args.exclude_lap1,
+            remove_outliers=not args.no_outlier_removal,
+            outlier_z=args.outlier_z,
+            outlier_min_samples=args.outlier_min_samples,
+            balance_categories=not args.no_balance_categories,
+            min_category_count=args.min_category_count,
             verbose=True,
         )
 
