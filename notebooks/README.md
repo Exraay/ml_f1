@@ -8,6 +8,7 @@ Run in order:
 5. 04_model_mlp.ipynb
 6. 05_model_comparison.ipynb
 7. 06_mlp_error_investigation.ipynb
+8. 07_scientific_validation_feature_interpretability.ipynb
 
 Notes:
 - The notebooks use Plotly for visuals.
