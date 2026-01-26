@@ -65,7 +65,7 @@ class TorchMLPRegressor(BaseEstimator, RegressorMixin):
             import torch
             from torch import nn
             from torch.utils.data import DataLoader, TensorDataset
-        except ImportError as exc:  # noqa: BLE001
+        except (ImportError, OSError) as exc:  # noqa: BLE001
             raise ImportError(
                 "PyTorch is required for TorchMLPRegressor. Install torch to use this model."
             ) from exc
@@ -84,6 +84,34 @@ class TorchMLPRegressor(BaseEstimator, RegressorMixin):
             in_features = hidden_units
         layers.append(nn_module.Linear(in_features, 1))
         return nn_module.Sequential(*layers)
+
+    def _select_device(self, torch):
+        if self.device:
+            try:
+                device = torch.device(self.device)
+                if device.type == "cuda":
+                    try:
+                        _ = torch.cuda.current_device()
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"CUDA requested but failed to initialize ({exc}); falling back to CPU.")
+                        return torch.device("cpu")
+                return device
+            except Exception as exc:  # noqa: BLE001
+                print(f"Requested device '{self.device}' failed ({exc}); falling back to CPU.")
+                return torch.device("cpu")
+
+        try:
+            if torch.cuda.is_available():
+                try:
+                    _ = torch.cuda.current_device()
+                    return torch.device("cuda")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"CUDA available but failed to initialize ({exc}); falling back to CPU.")
+                    return torch.device("cpu")
+        except Exception as exc:  # noqa: BLE001
+            print(f"CUDA check failed ({exc}); falling back to CPU.")
+
+        return torch.device("cpu")
 
     @staticmethod
     def _to_numpy(X) -> np.ndarray:
@@ -107,10 +135,7 @@ class TorchMLPRegressor(BaseEstimator, RegressorMixin):
         X_train, y_train = X_np[train_idx], y_np[train_idx]
         X_val, y_val = X_np[val_idx], y_np[val_idx]
 
-        if self.device:
-            device = torch.device(self.device)
-        else:
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = self._select_device(torch)
         self.device_ = str(device)
 
         train_dataset = TensorDataset(
@@ -292,10 +317,7 @@ class TorchMLPRegressor(BaseEstimator, RegressorMixin):
         torch, _, _, _ = self._require_torch()
         X_np = self._to_numpy(X)
 
-        if self.device:
-            device = torch.device(self.device)
-        else:
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = self._select_device(torch)
 
         self.model_.eval()
         with torch.no_grad():
