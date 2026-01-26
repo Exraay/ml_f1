@@ -8,7 +8,7 @@ from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.impute import SimpleImputer
 from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, TimeSeriesSplit
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import PolynomialFeatures, StandardScaler
 from sklearn.linear_model import Ridge
 
 
@@ -327,7 +327,17 @@ class TorchMLPRegressor(BaseEstimator, RegressorMixin):
         return preds
 
 
-def make_preprocessor(numeric_features: Iterable[str]) -> Pipeline:
+def make_linear_preprocessor(numeric_features: Iterable[str]) -> Pipeline:
+    return Pipeline(
+        steps=[
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+            ("poly", PolynomialFeatures(degree=2, interaction_only=True, include_bias=False)),
+        ]
+    )
+
+
+def make_mlp_preprocessor(numeric_features: Iterable[str]) -> Pipeline:
     return Pipeline(
         steps=[
             ("imputer", SimpleImputer(strategy="median")),
@@ -336,9 +346,36 @@ def make_preprocessor(numeric_features: Iterable[str]) -> Pipeline:
     )
 
 
-def make_pipeline(model: object, numeric_features: Iterable[str]) -> Pipeline:
-    preprocessor = make_preprocessor(numeric_features)
-    return Pipeline(steps=[("preprocess", preprocessor), ("model", model)])
+def make_tree_preprocessor(numeric_features: Iterable[str]) -> Pipeline:
+    return Pipeline(
+        steps=[
+            ("imputer", SimpleImputer(strategy="median")),
+        ]
+    )
+
+
+def make_pipeline(
+    model: object,
+    numeric_features: Iterable[str],
+    *,
+    preprocessor: Literal["auto", "linear", "mlp", "tree"] = "auto",
+) -> Pipeline:
+    if preprocessor == "auto":
+        if model.__class__.__name__ in {"XGBRegressor", "XGBRFRegressor"} or model.__class__.__module__.startswith("xgboost"):
+            preprocessor = "tree"
+        elif isinstance(model, TorchMLPRegressor):
+            preprocessor = "mlp"
+        else:
+            preprocessor = "linear"
+
+    if preprocessor == "tree":
+        prep = make_tree_preprocessor(numeric_features)
+    elif preprocessor == "mlp":
+        prep = make_mlp_preprocessor(numeric_features)
+    else:
+        prep = make_linear_preprocessor(numeric_features)
+
+    return Pipeline(steps=[("preprocess", prep), ("model", model)])
 
 
 def make_linear_model(random_state: int, *, alpha: float | None = None) -> Ridge:
