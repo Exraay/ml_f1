@@ -44,6 +44,54 @@ You can switch dataset file types as you prefer:
    - Rare categories can be collapsed for `TrackStatusFlag` and `TireAgeCategory` only.
 5. **Metadata**: saved alongside the dataset with feature lists and build parameters.
 
+## Model-specific pipelines (data handling)
+
+We keep one shared dataset, but use **model-specific preprocessing pipelines** so each model gets the right treatment:
+
+- **Linear/Ridge (LinReg)**: median imputation + standardization + polynomial interactions
+  - Pipeline: `SimpleImputer(median) -> StandardScaler -> PolynomialFeatures(degree=2, interaction_only=True)`
+- **MLP**: median imputation + standardization
+  - Pipeline: `SimpleImputer(median) -> StandardScaler`
+- **XGBoost**: median imputation only (no scaling)
+  - Pipeline: `SimpleImputer(median)`
+
+This keeps the comparison fair (same dataset) while giving each model appropriate preprocessing.
+
+## Base model parameters (SMALL_MODE = off)
+
+These are the defaults used when SMALL_MODE is **off** (i.e., no notebook overrides):
+
+**Linear / Ridge**
+- `alpha = 1.0` (default in `make_linear_model`)
+
+**XGBoost (`XGBRegressor`)**
+- `objective = "reg:squarederror"`
+- `n_estimators = 600`
+- `max_depth = 6`
+- `learning_rate = 0.05`
+- `subsample = 0.8`
+- `colsample_bytree = 0.8`
+- `min_child_weight = 3`
+- `reg_alpha = 0.1`
+- `reg_lambda = 2.0`
+- `tree_method = "hist"`
+- `n_jobs = -1`
+- `random_state = 42`
+
+**Deep MLP (`TorchMLPRegressor`)**
+- `hidden_layers = (256, 128, 64, 32)`
+- `dropout = 0.3`
+- `batch_norm = True`
+- `lr = 1e-3`
+- `epochs = 150`
+- `batch_size = 256`
+- `patience = 20`
+- `min_delta = 1e-4`
+- `weight_decay = 1e-4`
+- `lr_scheduler = True`
+- `validation_fraction = 0.1`
+- `random_state = 42`
+
 ### Train + evaluate (with tuning)
 
 ```bash
@@ -146,11 +194,36 @@ Legacy notebooks are preserved under `archive/notebooks/` to keep the repo slim.
 ## New notebook workflow (clean, focused)
 
 Run in order:
-1. `notebooks/00_setup.ipynb`
-2. `notebooks/01_dataset_overview.ipynb`
-3. `notebooks/02_model_linear.ipynb`
-4. `notebooks/03_model_xgboost.ipynb`
-5. `notebooks/04_model_mlp.ipynb`
-6. `notebooks/05_model_comparison.ipynb`
+1. `notebooks/00_setup.ipynb` - Environment setup
+2. `notebooks/01_dataset_overview.ipynb` - EDA, feature exploration, correlation analysis
+3. `notebooks/02_model_linear.ipynb` - Linear/Ridge model training
+4. `notebooks/03_model_xgboost.ipynb` - XGBoost training with early stopping
+5. `notebooks/04_model_mlp.ipynb` - Deep MLP (PyTorch) training
+6. `notebooks/05_model_comparison.ipynb` - Basic model comparison
+7. `notebooks/06_model_comparison_full.ipynb` - **Full analysis with all metrics & plots for Seminararbeit**
+8. `notebooks/07_scientific_validation_feature_interpretability.ipynb` - Defense document for examiner questions
 
 These notebooks use Plotly and share helpers from `notebooks/_common.py`.
+
+## Reports structure (MLOps best practices)
+
+```
+reports/
+├── models/                          # Trained model artifacts (.joblib)
+│   ├── linear.joblib
+│   ├── xgboost.joblib
+│   └── deep_mlp.joblib
+└── notebooks/
+    └── 06_model_comparison_full/    # Main output directory for paper
+        ├── metrics_comprehensive_2025.csv   # All numerical metrics
+        ├── predictions_2025.parquet         # Raw predictions
+        ├── model_comparison_mae_rmse.png    # Model comparison plots
+        ├── cumulative_error_distribution.png
+        ├── feature_importance_xgboost.png
+        ├── accuracy_thresholds.png
+        ├── mae_by_round_2025.png
+        ├── error_vs_lap_number.png
+        └── ... (20+ plots)
+```
+
+All plots are saved as both `.html` (interactive) and `.png` (static for paper).
