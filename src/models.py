@@ -17,6 +17,10 @@ def set_global_seed(random_state: int) -> None:
     np.random.seed(random_state)
 
 
+def identity_transform(X):
+    return X
+
+
 class TorchMLPRegressor(BaseEstimator, RegressorMixin):
     """
     PyTorch MLP Regressor with early stopping and LR scheduling.
@@ -349,7 +353,7 @@ def make_mlp_preprocessor(numeric_features: Iterable[str]) -> Pipeline:
 def make_tree_preprocessor(numeric_features: Iterable[str]) -> Pipeline:
     return Pipeline(
         steps=[
-            ("imputer", SimpleImputer(strategy="median")),
+            ("imputer", SimpleImputer(strategy="median", add_indicator=True)),
         ]
     )
 

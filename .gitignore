@@ -20,3 +20,4 @@ references.bib
 *.sqlite
 .claude
 archive/
+ml_f1_thesis/
