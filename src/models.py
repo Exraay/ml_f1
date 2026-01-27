@@ -468,7 +468,10 @@ def build_search(
     cv = TimeSeriesSplit(n_splits=cv_splits or n_splits)
 
     if model_name == "Linear":
-        default_param_grid = {"model__alpha": [0.1, 0.5, 1.0, 5.0, 10.0]}
+        default_param_grid = {
+            "model__alpha": [0.1, 0.5, 1.0, 5.0, 10.0],
+            "preprocess__poly__degree": [1, 2],
+        }
     elif model_name == "XGBoost":
         default_param_grid = {
             "model__max_depth": [3, 4, 5, 6, 8],
@@ -476,6 +479,7 @@ def build_search(
             "model__subsample": [0.7, 0.8, 0.9],
             "model__colsample_bytree": [0.7, 0.8, 0.9],
             "model__min_child_weight": [1, 3, 5],
+            "model__gamma": [0.0, 0.5, 1.0],
             "model__reg_alpha": [0.0, 0.1, 0.5],
             "model__reg_lambda": [1.0, 2.0, 5.0],
             "model__n_estimators": [300, 600, 900],

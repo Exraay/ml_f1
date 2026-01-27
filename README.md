@@ -205,6 +205,17 @@ Run in order:
 
 These notebooks use Plotly and share helpers from `notebooks/_common.py`.
 
+## Notebook overview (what each one is for)
+
+- `notebooks/00_setup.ipynb` - installs/validates dependencies and sets the environment.
+- `notebooks/01_dataset_overview.ipynb` - dataset sanity checks, EDA, and feature distribution review.
+- `notebooks/02_model_linear.ipynb` - linear/Ridge baseline, tuning, and diagnostics.
+- `notebooks/03_model_xgboost.ipynb` - XGBoost training + tuning + early stopping.
+- `notebooks/04_model_mlp.ipynb` - PyTorch MLP training, tuning, and learning curves.
+- `notebooks/05_model_comparison.ipynb` - quick side-by-side metrics + plots for all models.
+- `notebooks/06_model_comparison_full.ipynb` - full 2025 test analysis with comprehensive metrics and figures.
+- `notebooks/07_scientific_validation_feature_interpretability.ipynb` - data integrity, leakage defense, feature impact, and error analysis.
+
 ## Reports structure (MLOps best practices)
 
 ```
