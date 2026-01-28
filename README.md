@@ -62,12 +62,14 @@ We keep one shared dataset, but use **model-specific preprocessing pipelines** s
 
 This keeps the comparison fair (same dataset) while giving each model appropriate preprocessing.
 
-## Base model parameters (SMALL_MODE = off)
+## Base model parameters (defaults)
 
-These are the defaults used when SMALL_MODE is **off** (i.e., no notebook overrides):
+These are the defaults used by the model factory functions in `src/models.py` when no
+CLI/notebook overrides are provided (random seeds come from `--seed`, default **42**):
 
 **Linear / Ridge**
 - `alpha = 1.0` (default in `make_linear_model`)
+- `random_state = seed` (default **42**)
 
 **XGBoost (`XGBRegressor`)**
 - `objective = "reg:squarederror"`
@@ -81,7 +83,7 @@ These are the defaults used when SMALL_MODE is **off** (i.e., no notebook overri
 - `reg_lambda = 2.0`
 - `tree_method = "hist"`
 - `n_jobs = -1`
-- `random_state = 42`
+- `random_state = seed` (default **42**)
 
 **Deep MLP (`TorchMLPRegressor`)**
 - `hidden_layers = (256, 128, 64, 32)`
@@ -95,7 +97,7 @@ These are the defaults used when SMALL_MODE is **off** (i.e., no notebook overri
 - `weight_decay = 1e-4`
 - `lr_scheduler = True`
 - `validation_fraction = 0.1`
-- `random_state = 42`
+- `random_state = seed` (default **42**)
 
 ### Train + evaluate (with tuning)
 
